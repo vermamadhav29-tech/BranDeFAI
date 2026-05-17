@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String?
+  credits      Int      @default(50)
+  plan         String   @default("starter")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  brands       Brand[]
+  posts        ContentPost[]
+  payments     Payment[]
+  creditLogs   CreditLog[]
+  instagramAccounts InstagramAccount[]
+}
+
+model Brand {
+  id             String   @id @default(cuid())
+  userId         String
+  name           String
+  niche          String
+  tone           String
+  targetAudience String
+  logoUrl        String?
+  colors         String[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  posts          ContentPost[]
+  strategies     Strategy[]
+}
+
+model Strategy {
+  id        String   @id @default(cuid())
+  brandId   String
+  content   Json
+  createdAt DateTime @default(now())
+
+  brand     Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+}
+
+model ContentPost {
+  id          String   @id @default(cuid())
+  userId      String
+  brandId     String
+  type        String
+  content     String
+  mediaUrl    String?
+  status      String   @default("draft")
+  scheduledAt DateTime?
+  postedAt    DateTime?
+  instagramId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brand       Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+}
+
+model Payment {
+  id              String   @id @default(cuid())
+  userId          String
+  razorpayOrderId String   @unique
+  razorpayPaymentId String?
+  amount          Int
+  currency        String   @default("INR")
+  status          String   @default("created")
+  credits         Int
+  createdAt       DateTime @default(now())
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model CreditLog {
+  id          String   @id @default(cuid())
+  userId      String
+  action      String
+  credits     Int
+  balanceAfter Int
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model InstagramAccount {
+  id           String   @id @default(cuid())
+  userId       String
+  igUserId     String   @unique
+  username     String
+  accessToken  String
+  tokenExpiry  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
