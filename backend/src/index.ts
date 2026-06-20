@@ -25,9 +25,29 @@ import { startCreditRefreshJob } from "./jobs/creditRefreshJob";
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+const ALLOWED_ORIGINS = [
+  "https://brandefai.com",
+  "https://www.brandefai.com",
+  "https://bran-de-fai.vercel.app",
+  "http://localhost:3000",
+  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+];
+
 // Security & parsing middleware
 app.use(helmet());
-app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow server-to-server requests (no origin) and listed origins
+      if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS: origin '${origin}' not allowed`));
+      }
+    },
+    credentials: true,
+  })
+);
 app.use(morgan("dev"));
 app.use(cookieParser());
 
