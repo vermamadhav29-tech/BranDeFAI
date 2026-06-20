@@ -10,7 +10,7 @@ interface ContentCardProps {
 
 export default function ContentCard({ title, type, status, scheduledAt }: ContentCardProps) {
   return (
-    <Card className="hover:shadow-md transition-shadow cursor-pointer">
+    <Card hoverable>
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-[#1A2E44] truncate">{title}</p>

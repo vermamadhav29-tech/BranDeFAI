@@ -1,0 +1,182 @@
+import { Response, NextFunction } from "express";
+import prisma from "../utils/prisma";
+import { sendSuccess } from "../utils/response";
+import { createError } from "../middleware/errorHandler";
+import { AuthRequest } from "../middleware/auth";
+import { generateText } from "../services/ai/openaiService";
+import type { BrandInput, LogoUrlInput, GenerateFieldInput } from "../middleware/validators/brandSchemas";
+
+// ─── Voice Summary Helper ─────────────────────────────────────────────────────
+
+async function generateVoiceSummaryText(brand: {
+  brandName: string;
+  industry: string;
+  tone: string;
+  targetAudience: string;
+  brandBrief?: string | null;
+  platforms?: string[];
+}): Promise<string> {
+  const platformsStr = brand.platforms?.length ? `Sells on: ${brand.platforms.join(", ")}.` : "";
+  const system =
+    "You are a brand voice strategist. Return only the requested text — no labels, no bullet points, no headings, no preamble.";
+  const user = [
+    `Write a 200-word brand voice summary for ${brand.brandName}, a ${brand.industry} brand with a ${brand.tone} tone.`,
+    `Target audience: ${brand.targetAudience}.`,
+    platformsStr,
+    brand.brandBrief ? `Brand brief: ${brand.brandBrief}.` : "",
+    `Write as a single flowing paragraph. Describe who the brand speaks to, how it speaks, what language it uses, what it never does, and what emotional register it hits. Be specific, vivid, and concrete — not generic. Aim for 180-200 words.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return (await generateText(system, user)) as string;
+}
+
+export async function createBrand(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user!.id;
+
+    const existing = await prisma.brand.findUnique({ where: { userId } });
+    if (existing) {
+      return next(createError("Brand already exists for this account", 409));
+    }
+
+    const { brandName, industry, targetAudience, tone, platforms, brandBrief, logoUrl } = req.body as BrandInput;
+
+    const brand = await prisma.brand.create({
+      data: {
+        userId,
+        brandName,
+        industry,
+        targetAudience,
+        tone,
+        platforms: platforms ?? [],
+        brandBrief: brandBrief ?? null,
+        logoUrl: logoUrl ?? null,
+      },
+    });
+
+    // Fire-and-forget — generate voice summary in background without blocking onboarding
+    generateVoiceSummaryText(brand)
+      .then((summary) =>
+        prisma.brand.update({ where: { id: brand.id }, data: { voiceSummary: summary.trim() } })
+      )
+      .catch(() => {});
+
+    sendSuccess(res, brand, 201);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function getBrand(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const brand = await prisma.brand.findUnique({ where: { userId: req.user!.id } });
+
+    if (!brand) {
+      return next(createError("Brand not found", 404));
+    }
+
+    sendSuccess(res, brand);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function updateBrand(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user!.id;
+
+    const existing = await prisma.brand.findUnique({ where: { userId } });
+    if (!existing) {
+      return next(createError("Brand not found", 404));
+    }
+
+    const { brandName, industry, targetAudience, tone, platforms, brandBrief, logoUrl } = req.body as BrandInput;
+
+    const brand = await prisma.brand.update({
+      where: { userId },
+      data: {
+        brandName,
+        industry,
+        targetAudience,
+        tone,
+        platforms: platforms ?? [],
+        brandBrief: brandBrief ?? null,
+        logoUrl: logoUrl !== undefined ? logoUrl : existing.logoUrl,
+      },
+    });
+
+    sendSuccess(res, brand);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── PATCH /api/brand/logo ────────────────────────────────────────────────────
+// Update or remove the brand logo. Accepts { logoUrl: string | null }.
+
+export async function updateLogoUrl(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user!.id;
+
+    const existing = await prisma.brand.findUnique({ where: { userId } });
+    if (!existing) {
+      return next(createError("Brand not found", 404));
+    }
+
+    const { logoUrl } = req.body as LogoUrlInput;
+
+    const brand = await prisma.brand.update({
+      where: { userId },
+      data: { logoUrl },
+    });
+
+    sendSuccess(res, brand);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── POST /api/brand/regenerate-voice ────────────────────────────────────────
+// Regenerates the brand voice summary from the current brand profile.
+
+export async function regenerateVoiceSummary(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const existing = await prisma.brand.findUnique({ where: { userId: req.user!.id } });
+    if (!existing) return next(createError("Brand not found", 404));
+
+    const summary = await generateVoiceSummaryText(existing);
+    const updated = await prisma.brand.update({
+      where: { userId: req.user!.id },
+      data: { voiceSummary: summary.trim() },
+    });
+
+    sendSuccess(res, { voiceSummary: updated.voiceSummary });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── POST /api/brand/generate-field ──────────────────────────────────────────
+// AI-generates a target audience description or brand brief from brand context.
+// Called during onboarding before the brand record exists.
+
+export async function generateBrandField(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { brandName, industry, tone, platforms, field } = req.body as GenerateFieldInput;
+    const platformsStr = platforms.length > 0 ? platforms.join(", ") : "various channels";
+
+    const system =
+      "You are a brand strategy expert. Return only the requested text — no labels, no bullet points, no preamble, no trailing explanation.";
+
+    const user =
+      field === "targetAudience"
+        ? `${brandName} is a ${industry} brand with a ${tone} tone that sells on ${platformsStr}. Write a detailed target audience profile in 3-4 sentences covering demographics, psychographics, shopping behaviour, and key pain points. Write it as a flowing paragraph.`
+        : `Write a 5-sentence brand brief for ${brandName}, a ${industry} brand with a ${tone} tone that sells on ${platformsStr}. Cover: what the brand does, who it serves, its unique value proposition, its core values, and its market position. Write in third person as a professional brand description.`;
+
+    const text = (await generateText(system, user)) as string;
+    sendSuccess(res, { text: text.trim() });
+  } catch (err) {
+    next(err);
+  }
+}

@@ -1,19 +1,14 @@
 import { create } from "zustand";
-
-interface Brand {
-  id: string;
-  name: string;
-  niche: string;
-  tone: string;
-  logoUrl?: string;
-}
+import type { Brand } from "@/types";
 
 interface BrandStore {
   brand: Brand | null;
-  setBrand: (brand: Brand | null) => void;
+  setBrand: (brand: Brand) => void;
+  clearBrand: () => void;
 }
 
 export const useBrandStore = create<BrandStore>((set) => ({
   brand: null,
   setBrand: (brand) => set({ brand }),
+  clearBrand: () => set({ brand: null }),
 }));

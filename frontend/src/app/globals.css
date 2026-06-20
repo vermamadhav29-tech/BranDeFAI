@@ -1,26 +1,146 @@
 @import "tailwindcss";
 
 :root {
-  --background: #F5F7F9;
-  --foreground: #171717;
+  --background: #f5f7f9;
+  --foreground: #0f172a;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Typography */
+  --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
 
-  /* BranDeFAI brand colors */
-  --color-primary: #1A7A4A;
-  --color-primary-dark: #145C38;
-  --color-primary-light: #E8F5EE;
-  --color-navy: #1A2E44;
-  --color-bg: #F5F7F9;
+  /* Brand colors */
+  --color-primary: #1a7a4a;
+  --color-primary-dark: #145c38;
+  --color-primary-light: #e8f5ee;
+  --color-navy: #1a2e44;
+  --color-bg: #f5f7f9;
+
+  /* Surface & border */
+  --color-surface: #ffffff;
+  --color-surface-hover: #f9fafb;
+  --color-border: #e5e7eb;
+  --color-border-focus: #1a7a4a;
+
+  /* Text scale */
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94a3b8;
+  --color-text-inverse: #ffffff;
+
+  /* Dark mode tokens */
+  --color-dark-bg: #0f172a;
+  --color-dark-surface: #1e293b;
+  --color-dark-surface-hover: #334155;
+  --color-dark-border: #334155;
+  --color-dark-text: #e2e8f0;
+  --color-dark-text-muted: #94a3b8;
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Brand selection highlight */
+::selection {
+  background: #1a7a4a33;
+  color: #1a7a4a;
+}
+
+/* Green focus ring for keyboard nav */
+:focus-visible {
+  outline: 2px solid #1a7a4a;
+  outline-offset: 2px;
+}
+
+/* Remove outline for mouse users */
+:focus:not(:focus-visible) {
+  outline: none;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ── Theme switch transitions ──────────────────────────────────────────────── */
+body,
+section,
+header,
+footer,
+nav,
+main,
+aside {
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+
+/* ── Dark mode ─────────────────────────────────────────────────────────────── */
+html.dark {
+  color-scheme: dark;
+}
+
+html.dark body {
+  background-color: #020817;
+  color: #e2e8f0;
+}
+
+/* Surfaces */
+html.dark .bg-white        { background-color: #0f172a; }
+html.dark .bg-gray-50      { background-color: #1e293b; }
+html.dark .bg-\[\#FFFFFF\] { background-color: #0f172a; }
+html.dark .bg-\[\#F9FAFB\] { background-color: #1e293b; }
+html.dark .bg-\[\#F8FAFC\] { background-color: #1e293b; }
+html.dark .bg-\[\#F5F7F9\] { background-color: #020817; }
+
+/* Text */
+html.dark .text-\[\#1A2E44\] { color: #f1f5f9; }
+html.dark .text-\[\#111827\] { color: #f1f5f9; }
+html.dark .text-gray-900     { color: #f1f5f9; }
+html.dark .text-gray-800     { color: #e2e8f0; }
+html.dark .text-gray-700     { color: #cbd5e1; }
+html.dark .text-gray-600     { color: #94a3b8; }
+html.dark .text-gray-500     { color: #64748b; }
+html.dark .text-gray-400     { color: #475569; }
+
+/* Borders */
+html.dark .border-gray-50   { border-color: #1e293b; }
+html.dark .border-gray-100  { border-color: #1e293b; }
+html.dark .border-gray-200  { border-color: #334155; }
+html.dark .border-gray-300  { border-color: #475569; }
+
+/* Hover states */
+html.dark .hover\:bg-gray-50:hover    { background-color: #1e293b; }
+html.dark .hover\:bg-gray-100:hover   { background-color: #334155; }
+html.dark .hover\:text-gray-900:hover { color: #f1f5f9; }
+
+/* Shadows */
+html.dark .shadow-sm { box-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+html.dark .shadow    { box-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+html.dark .shadow-lg { box-shadow: 0 10px 15px rgba(0,0,0,0.5); }
+html.dark .shadow-xl { box-shadow: 0 20px 25px rgba(0,0,0,0.5); }
+
+/* Selection */
+html.dark ::selection {
+  background: rgba(52, 211, 153, 0.2);
+  color: #34d399;
+}
+
+/* ── Skeleton shimmer ──────────────────────────────────────────────────────── */
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #F0F4F8 25%, #E2E8F0 50%, #F0F4F8 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite linear;
+}
+
+html.dark .skeleton-shimmer {
+  background: linear-gradient(90deg, #1E293B 25%, #334155 50%, #1E293B 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite linear;
 }

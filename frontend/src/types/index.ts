@@ -7,20 +7,27 @@ export interface ApiResponse<T = unknown> {
 export interface User {
   id: string;
   email: string;
-  name: string;
-  credits: number;
-  createdAt: string;
+  plan: string;
+  creditsBalance: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Brand {
   id: string;
   userId: string;
-  name: string;
-  niche: string;
+  brandName: string;
+  industry: string;
   tone: string;
   targetAudience: string;
-  logoUrl?: string;
-  colors: string[];
+  logoUrl: string | null;
+  platforms: string[];
+  brandBrief: string | null;
+  voiceSummary?: string | null;
+  strategyApproved: boolean;
+  strategyData?: unknown;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ContentPost {

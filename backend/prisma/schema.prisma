@@ -6,101 +6,268 @@ datasource db {
   provider = "postgresql"
 }
 
-model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  name         String
-  passwordHash String?
-  credits      Int      @default(50)
-  plan         String   @default("starter")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+// ─── Enums ────────────────────────────────────────────────────────────────────
 
-  brands       Brand[]
-  posts        ContentPost[]
-  payments     Payment[]
-  creditLogs   CreditLog[]
-  instagramAccounts InstagramAccount[]
+enum Plan {
+  FREE
+  PRO
+  BUSINESS
 }
 
-model Brand {
-  id             String   @id @default(cuid())
-  userId         String
-  name           String
-  niche          String
-  tone           String
-  targetAudience String
-  logoUrl        String?
-  colors         String[]
+enum ImageSource {
+  GENERATED
+  UPLOADED
+}
+
+enum VideoStatus {
+  DRAFT
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ContentType {
+  CAPTION
+  REEL_IDEA
+  AD_COPY
+  IMAGE
+  VIDEO
+}
+
+enum EntryStatus {
+  SCHEDULED
+  PUBLISHED
+  SKIPPED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  EXPIRED
+}
+
+enum CreditType {
+  PLAN_ALLOCATION
+  PURCHASE
+  GENERATION
+  VIDEO_EXPORT
+  STRATEGY
+  VIDEO_SCENE
+  REFUND
+}
+
+enum SceneStatus {
+  PENDING
+  GENERATING
+  DONE
+  FAILED
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model User {
+  id             String   @id @default(uuid())
+  email          String   @unique
+  passwordHash   String?
+  googleId       String?  @unique
+  plan           Plan     @default(FREE)
+  creditsBalance Int      @default(50)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  posts          ContentPost[]
-  strategies     Strategy[]
+  brand                Brand?
+  paymentOrders        PaymentOrder[]
+  creditTransactions   CreditTransaction[]
+  productImages        ProductImage[]
+  generatedContents    GeneratedContent[]
+  generatedImages      GeneratedImage[]
+  videoProjects        VideoProject[]
+  calendarEntries      CalendarEntry[]
+  instagramConnection  InstagramConnection?
+  postBriefs           PostBrief[]
 }
 
-model Strategy {
-  id        String   @id @default(cuid())
-  brandId   String
-  content   Json
-  createdAt DateTime @default(now())
+model Brand {
+  id               String   @id @default(uuid())
+  userId           String   @unique
+  brandName        String
+  industry         String
+  targetAudience   String
+  tone             String
+  logoUrl          String?
+  platforms        String[] @default([])
+  brandBrief       String?
+  voiceSummary     String?
+  strategyApproved Boolean  @default(false)
+  strategyData     Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  brand     Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productImages     ProductImage[]
+  generatedContents GeneratedContent[]
+  generatedImages   GeneratedImage[]
+  videoProjects     VideoProject[]
+  calendarEntries   CalendarEntry[]
 }
 
-model ContentPost {
-  id          String   @id @default(cuid())
-  userId      String
-  brandId     String
-  type        String
-  content     String
-  mediaUrl    String?
-  status      String   @default("draft")
-  scheduledAt DateTime?
-  postedAt    DateTime?
-  instagramId String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+model ProductImage {
+  id             String   @id @default(uuid())
+  userId         String
+  brandId        String
+  imageUrl       String
+  visionAnalysis Json?
+  uploadedAt     DateTime @default(now())
 
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  brand       Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brand             Brand              @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  generatedContents GeneratedContent[]
+  postBriefs        PostBrief[]
 }
 
-model Payment {
-  id              String   @id @default(cuid())
+model PostBrief {
+  id             String   @id @default(uuid())
+  userId         String
+  productImageId String
+  briefJson      Json
+  createdAt      DateTime @default(now())
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productImage    ProductImage     @relation(fields: [productImageId], references: [id], onDelete: Cascade)
+  generatedImages GeneratedImage[]
+}
+
+model GeneratedContent {
+  id               String   @id @default(uuid())
+  userId           String
+  brandId          String
+  productImageId   String?
+  captions         Json
+  adCopy           Json
+  reelIdeas        Json
+  images           Json?
+  calendarAssigned Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brand        Brand         @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  productImage ProductImage? @relation(fields: [productImageId], references: [id], onDelete: SetNull)
+}
+
+model GeneratedImage {
+  id               String      @id @default(uuid())
+  userId           String
+  brandId          String
+  originalPrompt   String
+  enhancedPrompt   String
+  imageUrl         String
+  style            String
+  format           String
+  source           ImageSource
+  postBriefId      String?
+  calendarAssigned Boolean     @default(false)
+  createdAt        DateTime    @default(now())
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brand     Brand      @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  postBrief PostBrief? @relation(fields: [postBriefId], references: [id], onDelete: SetNull)
+}
+
+model VideoProject {
+  id                String      @id @default(uuid())
+  userId            String
+  brandId           String
+  title             String
+  strategyIdeaIndex Int?
+  timelineData      Json        @default("{}")
+  status            VideoStatus @default(DRAFT)
+  exportUrl         String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brand  Brand       @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  scenes VideoScene[]
+}
+
+model VideoScene {
+  id              String      @id @default(uuid())
+  projectId       String
+  sceneNumber     Int
+  description     String
+  prompt          String
+  productInvolved String      @default("")
+  duration        Int         @default(5)
+  imageUrl        String?
+  clipUrl         String?
+  status          SceneStatus @default(PENDING)
+  errorMessage    String?
+  createdAt       DateTime    @default(now())
+
+  project VideoProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model CalendarEntry {
+  id                String      @id @default(uuid())
+  userId            String
+  brandId           String
+  calendarDay       Int
+  month             Int
+  year              Int
+  contentType       ContentType
+  contentId         String
+  notes             String?
+  status            EntryStatus @default(SCHEDULED)
+  scheduledTime     DateTime?
+  postedToInstagram Boolean     @default(false)
+  instagramPostId   String?
+  hashtags          String[]    @default([])
+  keywords          String[]    @default([])
+  suggestedTime     String?
+  assetUrl          String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+}
+
+model PaymentOrder {
+  id              String        @id @default(uuid())
   userId          String
-  razorpayOrderId String   @unique
-  razorpayPaymentId String?
+  razorpayOrderId String        @unique
+  plan            Plan
   amount          Int
-  currency        String   @default("INR")
-  status          String   @default("created")
-  credits         Int
-  createdAt       DateTime @default(now())
+  currency        String        @default("INR")
+  status          PaymentStatus @default(PENDING)
+  createdAt       DateTime      @default(now())
 
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-model CreditLog {
-  id          String   @id @default(cuid())
-  userId      String
-  action      String
-  credits     Int
-  balanceAfter Int
-  createdAt   DateTime @default(now())
-
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model InstagramAccount {
-  id           String   @id @default(cuid())
+model CreditTransaction {
+  id           String     @id @default(uuid())
   userId       String
-  igUserId     String   @unique
-  username     String
-  accessToken  String
-  tokenExpiry  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  amount       Int
+  type         CreditType
+  referenceId  String?
+  balanceAfter Int
+  createdAt    DateTime   @default(now())
 
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model InstagramConnection {
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  igUserId       String
+  igUsername     String
+  pageId         String
+  accessToken    String
+  tokenExpiresAt DateTime?
+  isActive       Boolean   @default(true)
+  connectedAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
