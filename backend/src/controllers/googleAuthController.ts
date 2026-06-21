@@ -1,8 +1,7 @@
 import { Request, Response } from "express";
 import axios from "axios";
 import prisma from "../utils/prisma";
-import { signToken } from "../utils/jwt";
-import { COOKIE_NAME, COOKIE_OPTIONS } from "../utils/cookies";
+import { signExchangeToken } from "../utils/jwt";
 
 interface GoogleUserInfo {
   id: string;
@@ -88,13 +87,16 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
       console.log(`[Google OAuth] created new user id=${user.id}`);
     }
 
-    const token = signToken(user.id);
-    res.cookie(COOKIE_NAME, token, COOKIE_OPTIONS);
-
-    // Redirect to dashboard if they have a brand, otherwise brand-setup
+    // Do NOT set cookie here — a cookie set in a redirect response is treated as a
+    // third-party cookie by Safari ITP and Chrome and gets silently dropped.
+    // Instead, redirect to the frontend with a short-lived exchange token in the URL.
+    // The frontend /auth/callback page POSTs the token back to /api/auth/exchange,
+    // which sets the real session cookie via a direct XHR (same as email/password login).
+    const exchangeToken = signExchangeToken(user.id);
     const brand = await prisma.brand.findUnique({ where: { userId: user.id } });
-    const destination = brand ? `${frontendUrl}/dashboard` : `${frontendUrl}/brand-setup`;
-    console.log(`[Google OAuth] redirecting to ${destination}`);
+    const next = brand ? "dashboard" : "brand-setup";
+    const destination = `${frontendUrl}/auth/callback?token=${exchangeToken}&next=${next}`;
+    console.log(`[Google OAuth] redirecting to exchange callback, next=${next}`);
     res.redirect(destination);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

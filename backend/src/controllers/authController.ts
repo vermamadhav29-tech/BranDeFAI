@@ -1,7 +1,7 @@
 import { Response, NextFunction } from "express";
 import bcrypt from "bcryptjs";
 import prisma from "../utils/prisma";
-import { signToken } from "../utils/jwt";
+import { signToken, verifyExchangeToken } from "../utils/jwt";
 import { sendSuccess } from "../utils/response";
 import { createError } from "../middleware/errorHandler";
 import { AuthRequest } from "../middleware/auth";
@@ -65,4 +65,32 @@ export async function logout(_req: AuthRequest, res: Response): Promise<void> {
 export async function me(req: AuthRequest, res: Response): Promise<void> {
   console.log(`[auth/me] userId=${req.user?.id} plan=${req.user?.plan} creditsBalance=${req.user?.creditsBalance}`);
   sendSuccess(res, req.user);
+}
+
+// Completes Google OAuth: frontend POSTs the short-lived exchange token from the
+// redirect URL, we verify it and set the real session cookie — identical to login().
+export async function exchange(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { token } = req.body as { token?: string };
+    if (!token) return next(createError("Exchange token required", 400));
+
+    const { userId } = verifyExchangeToken(token);
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, plan: true, creditsBalance: true },
+    });
+    if (!user) return next(createError("User not found", 401));
+
+    console.log(`[auth/exchange] userId=${user.id} plan=${user.plan}`);
+    res.cookie(COOKIE_NAME, signToken(user.id), COOKIE_OPTIONS);
+    sendSuccess(res, {
+      userId: user.id,
+      email: user.email,
+      plan: user.plan,
+      creditsBalance: user.creditsBalance,
+    });
+  } catch (err) {
+    next(err);
+  }
 }
