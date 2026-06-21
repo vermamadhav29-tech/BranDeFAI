@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -493,11 +493,24 @@ const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
   google_failed: "Google sign-in failed. Please try again.",
 };
 
+function OAuthErrorBanner() {
+  const searchParams = useSearchParams();
+  const oauthError = searchParams.get("error");
+  if (!oauthError || !GOOGLE_ERROR_MESSAGES[oauthError]) return null;
+  return (
+    <motion.p
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-xl px-3 py-2.5 mb-4"
+    >
+      {GOOGLE_ERROR_MESSAGES[oauthError]}
+    </motion.p>
+  );
+}
+
 function FormPanel() {
   const [tab, setTab] = useState<Tab>("signin");
   const [shakeKey, setShakeKey] = useState(0);
-  const searchParams = useSearchParams();
-  const oauthError = searchParams.get("error");
 
   const triggerShake = () => setShakeKey((k) => k + 1);
 
@@ -543,16 +556,10 @@ function FormPanel() {
           </p>
         </motion.div>
 
-        {/* OAuth error banner */}
-        {oauthError && GOOGLE_ERROR_MESSAGES[oauthError] && (
-          <motion.p
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-xl px-3 py-2.5 mb-4"
-          >
-            {GOOGLE_ERROR_MESSAGES[oauthError]}
-          </motion.p>
-        )}
+        {/* OAuth error banner — Suspense required for useSearchParams in App Router */}
+        <Suspense fallback={null}>
+          <OAuthErrorBanner />
+        </Suspense>
 
         {/* tabs */}
         <motion.div {...fadeIn(0.14)} className="flex border-b border-gray-100 mb-6">
