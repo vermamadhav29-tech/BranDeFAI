@@ -25,22 +25,27 @@ import { startCreditRefreshJob } from "./jobs/creditRefreshJob";
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-const ALLOWED_ORIGINS = [
+const ALLOWED_ORIGINS = new Set([
   "https://brandefai.com",
   "https://www.brandefai.com",
   "https://bran-de-fai.vercel.app",
   "http://localhost:3000",
-  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
-];
+]);
 
 // Security & parsing middleware
 app.use(helmet());
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow server-to-server requests (no origin) and listed origins
-      if (!origin || ALLOWED_ORIGINS.includes(origin)) {
-        callback(null, true);
+      if (!origin) {
+        // Server-to-server request — no Origin header, skip CORS headers entirely.
+        callback(null, false);
+        return;
+      }
+      if (ALLOWED_ORIGINS.has(origin)) {
+        // Echo the exact request origin so Access-Control-Allow-Origin always matches
+        // the page the browser is on (brandefai.com OR www.brandefai.com).
+        callback(null, origin);
       } else {
         callback(new Error(`CORS: origin '${origin}' not allowed`));
       }
