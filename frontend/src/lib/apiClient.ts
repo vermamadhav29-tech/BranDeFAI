@@ -6,13 +6,17 @@ const apiClient = axios.create({
   timeout: 120_000, // 120s — content generation runs gpt-image-1 which can take 30-60s total
 });
 
+// Public pages where a 401 on /api/auth/me is expected — do NOT redirect to login
+const PUBLIC_PATHS = ["/", "/pricing"];
+
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (
       error.response?.status === 401 &&
       typeof window !== "undefined" &&
-      !window.location.pathname.startsWith("/login")
+      !window.location.pathname.startsWith("/login") &&
+      !PUBLIC_PATHS.includes(window.location.pathname)
     ) {
       window.location.href = "/login";
     }
