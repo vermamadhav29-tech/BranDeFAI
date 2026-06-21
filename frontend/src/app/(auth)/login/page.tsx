@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -209,7 +209,14 @@ function BrandPanel() {
 
 function GoogleButton({ delay }: { delay: number }) {
   function handleGoogleLogin() {
-    window.location.href = `${process.env.NEXT_PUBLIC_API_URL}/api/auth/google`;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+    const target = `${apiUrl}/api/auth/google`;
+    console.log("[GoogleButton] redirecting to:", target, "| NEXT_PUBLIC_API_URL =", apiUrl);
+    if (!apiUrl) {
+      console.error("[GoogleButton] NEXT_PUBLIC_API_URL is not defined — check Vercel env vars");
+      return;
+    }
+    window.location.href = target;
   }
 
   return (
@@ -468,6 +475,9 @@ function RegisterForm({ onShake }: { onShake: () => void }) {
           "Create Account"
         )}
       </motion.button>
+
+      <OrDivider delay={0.4} />
+      <GoogleButton delay={0.44} />
     </form>
   );
 }
