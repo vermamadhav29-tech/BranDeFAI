@@ -312,6 +312,9 @@ export default function BrandSetupPage() {
   const isAuthLoading = useAuthStore((s) => s.isLoading);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
+  // DIAGNOSTIC — remove after issue is confirmed
+  console.log("[brand-setup] render — isAuthLoading:", isAuthLoading, "isAuthenticated:", isAuthenticated);
+
   const [isChecking, setIsChecking] = useState(true);
   const [step, setStep] = useState(1);
   const [direction, setDirection] = useState(1);
@@ -346,12 +349,20 @@ export default function BrandSetupPage() {
   const [briefGenerated, setBriefGenerated] = useState(false);
 
   useEffect(() => {
-    // Wait for the auth store to settle (the /api/auth/me round-trip or exchange setUser).
-    // Firing GET /api/brand before auth is confirmed can produce a spurious 401 that the
-    // interceptor turns into a hard redirect to /login before the page ever renders.
-    if (isAuthLoading) return;
+    console.log("[brand-setup] effect fired — isAuthLoading:", isAuthLoading, "isAuthenticated:", isAuthenticated);
+
+    // Wait for auth to settle: either isLoading finishes OR exchange already set the user.
+    // Don't redirect to /login here — /brand-setup is in PUBLIC_PATHS so any 401 from
+    // GET /api/brand is silently dropped, and an unauthenticated user just sees the form
+    // until the auth store finishes resolving.
+    if (isAuthLoading && !isAuthenticated) {
+      console.log("[brand-setup] waiting for auth to settle...");
+      return;
+    }
 
     if (!isAuthenticated) {
+      // Auth settled and user is genuinely not logged in — redirect to login.
+      console.warn("[brand-setup] not authenticated — redirecting to /login");
       router.replace("/login");
       return;
     }
