@@ -6,8 +6,9 @@ const apiClient = axios.create({
   timeout: 120_000, // 120s — content generation runs gpt-image-1 which can take 30-60s total
 });
 
-// Public pages where a 401 on /api/auth/me is expected — do NOT redirect to login
-const PUBLIC_PATHS = ["/", "/pricing"];
+// Pages where a 401 on /api/auth/me must NOT trigger a redirect to /login.
+// /callback is critical: it's mid-OAuth exchange, and the hard-nav would abort the in-flight POST.
+const PUBLIC_PATHS = ["/", "/pricing", "/callback"];
 
 apiClient.interceptors.response.use(
   (response) => response,

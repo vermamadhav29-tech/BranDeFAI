@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, Suspense } from "react";
+import { useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import apiClient from "@/lib/apiClient";
@@ -10,12 +10,19 @@ function CallbackHandler() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const setUser = useAuthStore((s) => s.setUser);
+  // Guard against React 18 StrictMode double-invoke: exchange must fire exactly once.
+  // Without this, StrictMode mounts → unmounts → remounts, causing two simultaneous
+  // exchange POSTs, and the first cleanup could abort the second.
+  const ran = useRef(false);
 
   useEffect(() => {
+    if (ran.current) return;
+    ran.current = true;
+
     const token = searchParams.get("token");
     const next = searchParams.get("next") ?? "dashboard";
 
-    console.log("[auth/callback] page mounted — token present:", !!token, "| next:", next);
+    console.log("[auth/callback] exchange start — token present:", !!token, "| next:", next);
 
     if (!token) {
       console.error("[auth/callback] no exchange token in URL — full href:", window.location.href);
@@ -23,7 +30,6 @@ function CallbackHandler() {
       return;
     }
 
-    console.log("[auth/callback] POSTing to /api/auth/exchange …");
     apiClient
       .post<{
         success: boolean;
@@ -31,21 +37,22 @@ function CallbackHandler() {
         error: string | null;
       }>("/api/auth/exchange", { token })
       .then((res) => {
-        console.log("[auth/callback] exchange response:", res.status, res.data);
+        console.log("[auth/callback] exchange resolved — status:", res.status, "body:", res.data);
         if (res.data.success) {
           const { userId, email, plan, creditsBalance } = res.data.data;
-          console.log(`[auth/callback] exchange ok — userId=${userId} plan=${plan} — redirecting to /${next}`);
+          console.log(`[auth/callback] redirecting → /${next} (userId=${userId} plan=${plan})`);
           setUser({ id: userId, email, plan, creditsBalance });
           router.replace(`/${next}`);
         } else {
-          console.error("[auth/callback] exchange returned success:false —", res.data.error);
+          console.error("[auth/callback] exchange success:false —", res.data.error);
           router.replace("/login?error=google_failed");
         }
       })
       .catch((err) => {
         console.error(
-          "[auth/callback] exchange POST failed —",
+          "[auth/callback] exchange POST failed — status:",
           err?.response?.status,
+          "body:",
           err?.response?.data ?? err?.message,
         );
         router.replace("/login?error=google_failed");
