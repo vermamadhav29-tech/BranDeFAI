@@ -5,18 +5,7 @@ import { signToken } from "../utils/jwt";
 import { sendSuccess } from "../utils/response";
 import { createError } from "../middleware/errorHandler";
 import { AuthRequest } from "../middleware/auth";
-
-const COOKIE_NAME = "brandefai_token";
-// Cross-domain (Vercel ↔ Railway): sameSite must be "none" + secure in production.
-// Locally: "lax" works fine and avoids needing HTTPS.
-const IS_PROD = process.env.NODE_ENV === "production";
-const COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: IS_PROD,
-  sameSite: (IS_PROD ? "none" : "lax") as "none" | "lax",
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-  path: "/",
-};
+import { COOKIE_NAME, COOKIE_OPTIONS } from "../utils/cookies";
 
 export async function register(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {

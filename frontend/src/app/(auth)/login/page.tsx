@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import apiClient from "@/lib/apiClient";
@@ -208,9 +208,14 @@ function BrandPanel() {
 // ─── Google button ─────────────────────────────────────────────────────────────
 
 function GoogleButton({ delay }: { delay: number }) {
+  function handleGoogleLogin() {
+    window.location.href = `${process.env.NEXT_PUBLIC_API_URL}/api/auth/google`;
+  }
+
   return (
     <motion.button
       type="button"
+      onClick={handleGoogleLogin}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay }}
@@ -473,9 +478,16 @@ type Tab = "signin" | "register";
 
 // ─── Right side — form panel ───────────────────────────────────────────────────
 
+const GOOGLE_ERROR_MESSAGES: Record<string, string> = {
+  google_denied: "Google sign-in was cancelled.",
+  google_failed: "Google sign-in failed. Please try again.",
+};
+
 function FormPanel() {
   const [tab, setTab] = useState<Tab>("signin");
   const [shakeKey, setShakeKey] = useState(0);
+  const searchParams = useSearchParams();
+  const oauthError = searchParams.get("error");
 
   const triggerShake = () => setShakeKey((k) => k + 1);
 
@@ -520,6 +532,17 @@ function FormPanel() {
               : "Start automating your brand today"}
           </p>
         </motion.div>
+
+        {/* OAuth error banner */}
+        {oauthError && GOOGLE_ERROR_MESSAGES[oauthError] && (
+          <motion.p
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-xl px-3 py-2.5 mb-4"
+          >
+            {GOOGLE_ERROR_MESSAGES[oauthError]}
+          </motion.p>
+        )}
 
         {/* tabs */}
         <motion.div {...fadeIn(0.14)} className="flex border-b border-gray-100 mb-6">
