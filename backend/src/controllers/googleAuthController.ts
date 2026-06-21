@@ -32,12 +32,7 @@ export function googleRedirect(_req: Request, res: Response): void {
 }
 
 export async function googleCallback(req: Request, res: Response): Promise<void> {
-  // Normalize to canonical www host — Vercel 308-redirects non-www → www, and a
-  // mid-OAuth redirect bounce can cause the exchange token to arrive on the wrong origin.
-  const frontendUrl = (process.env.FRONTEND_URL ?? "http://localhost:3000").replace(
-    /^https:\/\/brandefai\.com(?=\/|$)/,
-    "https://www.brandefai.com",
-  );
+  const frontendUrl = process.env.FRONTEND_URL ?? "http://localhost:3000";
   const { code, error } = req.query as { code?: string; error?: string };
 
   if (error || !code) {
