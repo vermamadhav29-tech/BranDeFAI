@@ -15,14 +15,15 @@ function CallbackHandler() {
     const token = searchParams.get("token");
     const next = searchParams.get("next") ?? "dashboard";
 
+    console.log("[auth/callback] page mounted — token present:", !!token, "| next:", next);
+
     if (!token) {
-      console.error("[auth/callback] no exchange token in URL");
+      console.error("[auth/callback] no exchange token in URL — full href:", window.location.href);
       router.replace("/login?error=google_failed");
       return;
     }
 
-    // POST the exchange token to the backend — this is a direct XHR, same as
-    // email/password login, so the Set-Cookie response is stored reliably.
+    console.log("[auth/callback] POSTing to /api/auth/exchange …");
     apiClient
       .post<{
         success: boolean;
@@ -30,17 +31,23 @@ function CallbackHandler() {
         error: string | null;
       }>("/api/auth/exchange", { token })
       .then((res) => {
+        console.log("[auth/callback] exchange response:", res.status, res.data);
         if (res.data.success) {
           const { userId, email, plan, creditsBalance } = res.data.data;
-          console.log(`[auth/callback] exchange ok — userId=${userId} plan=${plan}`);
+          console.log(`[auth/callback] exchange ok — userId=${userId} plan=${plan} — redirecting to /${next}`);
           setUser({ id: userId, email, plan, creditsBalance });
           router.replace(`/${next}`);
         } else {
+          console.error("[auth/callback] exchange returned success:false —", res.data.error);
           router.replace("/login?error=google_failed");
         }
       })
       .catch((err) => {
-        console.error("[auth/callback] exchange failed:", err?.response?.data ?? err?.message);
+        console.error(
+          "[auth/callback] exchange POST failed —",
+          err?.response?.status,
+          err?.response?.data ?? err?.message,
+        );
         router.replace("/login?error=google_failed");
       });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

@@ -95,7 +95,7 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
     const exchangeToken = signExchangeToken(user.id);
     const brand = await prisma.brand.findUnique({ where: { userId: user.id } });
     const next = brand ? "dashboard" : "brand-setup";
-    const destination = `${frontendUrl}/auth/callback?token=${exchangeToken}&next=${next}`;
+    const destination = `${frontendUrl}/callback?token=${exchangeToken}&next=${next}`;
     console.log(`[Google OAuth] redirecting to exchange callback, next=${next}`);
     res.redirect(destination);
   } catch (err: unknown) {
