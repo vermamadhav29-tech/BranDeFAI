@@ -33,7 +33,13 @@ export function useAuth() {
       .catch((err) => {
         if (err?.code !== "ERR_CANCELED") {
           console.warn("[useAuth] /api/auth/me failed:", err?.message ?? err);
-          clearUser();
+          // Don't clear if the OAuth exchange completed mid-flight and already set the user.
+          // This 401 is from a request that was fired before the exchange cookie was set.
+          if (!useAuthStore.getState().isAuthenticated) {
+            clearUser();
+          } else {
+            console.warn("[useAuth] stale /me 401 ignored — exchange already authenticated");
+          }
         }
       })
       .finally(() => setLoading(false));

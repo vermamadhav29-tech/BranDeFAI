@@ -343,16 +343,21 @@ export default function BrandSetupPage() {
   const [briefGenerated, setBriefGenerated] = useState(false);
 
   useEffect(() => {
+    console.log("[brand-setup] mounted — checking for existing brand");
     apiClient
       .get<{ success: boolean; data: Brand | null }>("/api/brand")
       .then((res) => {
+        console.log("[brand-setup] GET /api/brand →", res.status, res.data);
         if (res.data.success && res.data.data) {
           router.replace("/dashboard");
         } else {
           setIsChecking(false);
         }
       })
-      .catch(() => setIsChecking(false));
+      .catch((err) => {
+        console.error("[brand-setup] GET /api/brand failed →", err?.response?.status, err?.response?.data ?? err?.message);
+        setIsChecking(false);
+      });
   }, [router]);
 
   const filteredIndustries = useMemo(
