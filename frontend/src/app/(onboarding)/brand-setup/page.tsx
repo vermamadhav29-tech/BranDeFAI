@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, Search, Check, Upload, X, ImageIcon, Sparkles, RefreshCw } from "lucide-react";
 import apiClient from "@/lib/apiClient";
 import { useBrandStore } from "@/stores/brandStore";
+import { useAuthStore } from "@/stores/authStore";
 import { cn } from "@/lib/utils";
 import type { Brand } from "@/types";
 
@@ -308,6 +309,8 @@ function AiGenerateBtn({
 export default function BrandSetupPage() {
   const router = useRouter();
   const setBrand = useBrandStore((s) => s.setBrand);
+  const isAuthLoading = useAuthStore((s) => s.isLoading);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   const [isChecking, setIsChecking] = useState(true);
   const [step, setStep] = useState(1);
@@ -343,7 +346,17 @@ export default function BrandSetupPage() {
   const [briefGenerated, setBriefGenerated] = useState(false);
 
   useEffect(() => {
-    console.log("[brand-setup] mounted — checking for existing brand");
+    // Wait for the auth store to settle (the /api/auth/me round-trip or exchange setUser).
+    // Firing GET /api/brand before auth is confirmed can produce a spurious 401 that the
+    // interceptor turns into a hard redirect to /login before the page ever renders.
+    if (isAuthLoading) return;
+
+    if (!isAuthenticated) {
+      router.replace("/login");
+      return;
+    }
+
+    console.log("[brand-setup] auth confirmed — checking for existing brand");
     apiClient
       .get<{ success: boolean; data: Brand | null }>("/api/brand")
       .then((res) => {
@@ -358,7 +371,7 @@ export default function BrandSetupPage() {
         console.error("[brand-setup] GET /api/brand failed →", err?.response?.status, err?.response?.data ?? err?.message);
         setIsChecking(false);
       });
-  }, [router]);
+  }, [router, isAuthLoading, isAuthenticated]);
 
   const filteredIndustries = useMemo(
     () =>
