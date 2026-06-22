@@ -351,11 +351,11 @@ export default function BrandSetupPage() {
   useEffect(() => {
     console.log("[brand-setup] effect fired — isAuthLoading:", isAuthLoading, "isAuthenticated:", isAuthenticated);
 
-    // Wait for auth to settle: either isLoading finishes OR exchange already set the user.
-    // Don't redirect to /login here — /brand-setup is in PUBLIC_PATHS so any 401 from
-    // GET /api/brand is silently dropped, and an unauthenticated user just sees the form
-    // until the auth store finishes resolving.
-    if (isAuthLoading && !isAuthenticated) {
+    // Wait for auth to fully settle before acting — mirrors DashboardShell's guard.
+    // The transient { isLoading: false, isAuthenticated: false } window that occurs
+    // briefly after the OAuth callback (before /me resolves) must not trigger a
+    // redirect. Waiting whenever isLoading is true covers all transient states.
+    if (isAuthLoading) {
       console.log("[brand-setup] waiting for auth to settle...");
       return;
     }
