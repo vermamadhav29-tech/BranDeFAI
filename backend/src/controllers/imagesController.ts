@@ -1,12 +1,13 @@
 import { Response, NextFunction } from "express";
 import prisma from "../utils/prisma";
 import { generateStandaloneImage, deleteCloudinaryImage, generateProductPostImages } from "../services/ai/imageGenService";
+import { generateLifestyleImage as generateLifestyleImageFlux } from "../services/fluxImage.service";
 import { generatePostBrief as generatePostBriefAI } from "../services/ai/openaiService";
 import type { PostBriefData, VisionAnalysis } from "../services/ai/openaiService";
 import { sendSuccess } from "../utils/response";
 import { createError } from "../middleware/errorHandler";
 import { AuthRequest } from "../middleware/auth";
-import type { GenerateImageInput, GeneratePostBriefsInput, GenerateProductPostsInput } from "../middleware/validators/imageSchemas";
+import type { GenerateImageInput, GeneratePostBriefsInput, GenerateProductPostsInput, LifestyleImageInput } from "../middleware/validators/imageSchemas";
 
 // ─── POST /api/images/generate ────────────────────────────────────────────────
 
@@ -227,6 +228,30 @@ export async function listPostBriefs(
     }));
 
     sendSuccess(res, { briefs });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── POST /api/images/lifestyle ───────────────────────────────────────────────
+// Generates a realistic lifestyle/product photo via Flux 2 Pro.
+
+export async function generateLifestyleImage(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const user = req.user!;
+
+    if (user.creditsBalance < 5) {
+      return next(createError("Insufficient credits. You need at least 5 credits to generate an image.", 402));
+    }
+
+    const { brief, brandId } = req.body as LifestyleImageInput;
+
+    const result = await generateLifestyleImageFlux(user.id, brandId, brief);
+    sendSuccess(res, result, 201);
   } catch (err) {
     next(err);
   }

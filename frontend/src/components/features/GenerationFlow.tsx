@@ -48,6 +48,20 @@ interface ApiData<T> {
   error: string | null;
 }
 
+interface CaptionVariant {
+  type: "emotional" | "offer_driven" | "festival_occasion";
+  hook: string;
+  body: string;
+  cta: string;
+  full_caption: string;
+  hashtags: string[];
+}
+
+interface CaptionResponse {
+  caption: CaptionVariant;
+  hasMoreAlternates: boolean;
+}
+
 export interface GenerationFlowProps {
   productImageId: string;
   onReset: () => void;
@@ -524,6 +538,8 @@ export function GenerationFlow({ productImageId, onReset }: GenerationFlowProps)
   // Mutable results state
   const [captions, setCaptions] = useState<string[]>([]);
   const [captionLoading, setCaptionLoading] = useState<Set<number>>(new Set());
+  const [hasMoreAlternates, setHasMoreAlternates] = useState(false);
+  const [alternateLoading, setAlternateLoading] = useState(false);
   const [adCopy, setAdCopy] = useState<AdCopy | null>(null);
   const [adCopyLoading, setAdCopyLoading] = useState(false);
 
@@ -592,11 +608,12 @@ export function GenerationFlow({ productImageId, onReset }: GenerationFlowProps)
       if (!result) return;
       setCaptionLoading((prev) => new Set([...prev, idx]));
       try {
-        const res = await apiClient.post<ApiData<{ captions: string[] }>>(
+        const res = await apiClient.post<ApiData<CaptionResponse>>(
           `/api/content/${result.contentId}/regenerate-caption`
         );
-        if (res.data.success && res.data.data?.captions) {
-          setCaptions(res.data.data.captions);
+        if (res.data.success && res.data.data?.caption) {
+          setCaptions([res.data.data.caption.full_caption]);
+          setHasMoreAlternates(res.data.data.hasMoreAlternates);
           if (user) updateCredits(Math.max(0, user.creditsBalance - 2));
         }
       } catch {
@@ -611,6 +628,25 @@ export function GenerationFlow({ productImageId, onReset }: GenerationFlowProps)
     },
     [result, user, updateCredits]
   );
+
+  const handleShowAnotherCaption = useCallback(async () => {
+    if (!result) return;
+    setAlternateLoading(true);
+    try {
+      const res = await apiClient.post<ApiData<CaptionResponse>>(
+        `/api/content/${result.contentId}/caption/next-alternate`
+      );
+      if (res.data.success && res.data.data?.caption) {
+        setCaptions([res.data.data.caption.full_caption]);
+        setHasMoreAlternates(res.data.data.hasMoreAlternates);
+      }
+    } catch {
+      showToast("No more alternate versions. Try Regenerate for fresh captions.");
+      setHasMoreAlternates(false);
+    } finally {
+      setAlternateLoading(false);
+    }
+  }, [result]);
 
   const handleRegenerateAdCopy = useCallback(async () => {
     if (!result) return;
@@ -716,7 +752,9 @@ export function GenerationFlow({ productImageId, onReset }: GenerationFlowProps)
             <section>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
                 Instagram Captions
-                <span className="normal-case font-normal ml-1 text-gray-300">— choose your favourite or use all 3</span>
+                <span className="normal-case font-normal ml-1 text-gray-300">
+                  {captions.length > 1 ? "— choose your favourite or use all 3" : "— AI's top pick for this post"}
+                </span>
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {captions.map((caption, i) => (
@@ -729,6 +767,18 @@ export function GenerationFlow({ productImageId, onReset }: GenerationFlowProps)
                   />
                 ))}
               </div>
+              {captions.length === 1 && hasMoreAlternates && (
+                <button
+                  type="button"
+                  onClick={handleShowAnotherCaption}
+                  disabled={alternateLoading}
+                  className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-gray-50 text-gray-500 hover:bg-gray-100 transition-colors mt-3 disabled:opacity-40"
+                >
+                  {alternateLoading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                  Show me another
+                  <span className="text-gray-400">free</span>
+                </button>
+              )}
             </section>
 
             {/* ── Ad Copy ──────────────────────────────────────────────────── */}

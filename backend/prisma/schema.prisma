@@ -76,16 +76,16 @@ model User {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  brand                Brand?
-  paymentOrders        PaymentOrder[]
-  creditTransactions   CreditTransaction[]
-  productImages        ProductImage[]
-  generatedContents    GeneratedContent[]
-  generatedImages      GeneratedImage[]
-  videoProjects        VideoProject[]
-  calendarEntries      CalendarEntry[]
-  instagramConnection  InstagramConnection?
-  postBriefs           PostBrief[]
+  brand               Brand?
+  paymentOrders       PaymentOrder[]
+  creditTransactions  CreditTransaction[]
+  productImages       ProductImage[]
+  generatedContents   GeneratedContent[]
+  generatedImages     GeneratedImage[]
+  videoProjects       VideoProject[]
+  calendarEntries     CalendarEntry[]
+  instagramConnection InstagramConnection?
+  postBriefs          PostBrief[]
 }
 
 model Brand {
@@ -98,7 +98,11 @@ model Brand {
   logoUrl          String?
   platforms        String[] @default([])
   brandBrief       String?
+  whatTheySell     String?
+  city             String?
   voiceSummary     String?
+  brandVibe        String?
+  brandDna         String?
   strategyApproved Boolean  @default(false)
   strategyData     Json?
   createdAt        DateTime @default(now())
@@ -139,16 +143,20 @@ model PostBrief {
 }
 
 model GeneratedContent {
-  id               String   @id @default(uuid())
-  userId           String
-  brandId          String
-  productImageId   String?
-  captions         Json
-  adCopy           Json
-  reelIdeas        Json
-  images           Json?
-  calendarAssigned Boolean  @default(false)
-  createdAt        DateTime @default(now())
+  id                String   @id @default(uuid())
+  userId            String
+  brandId           String
+  productImageId    String?
+  captions          Json
+  adCopy            Json
+  reelIdeas         Json
+  images            Json?
+  captionSelected   Json?
+  captionAlternates Json?
+  seoKeywords       Json?
+  captionAltIndex   Int      @default(0)
+  calendarAssigned  Boolean  @default(false)
+  createdAt         DateTime @default(now())
 
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   brand        Brand         @relation(fields: [brandId], references: [id], onDelete: Cascade)
@@ -186,8 +194,8 @@ model VideoProject {
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
-  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  brand  Brand       @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brand  Brand        @relation(fields: [brandId], references: [id], onDelete: Cascade)
   scenes VideoScene[]
 }
 
@@ -256,6 +264,20 @@ model CreditTransaction {
   createdAt    DateTime   @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Internal-only — never queried for or exposed in any user-facing API response.
+model ContentQualityLog {
+  id               String   @id @default(uuid())
+  contentId        String
+  brandId          String
+  userId           String
+  scores           Json
+  needsImprovement Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  @@index([contentId])
+  @@index([brandId])
 }
 
 model InstagramConnection {

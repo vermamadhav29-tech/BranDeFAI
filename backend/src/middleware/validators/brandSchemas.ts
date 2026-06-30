@@ -19,6 +19,8 @@ export const brandSchema = z.object({
   ]),
   platforms: z.array(z.string()).optional().default([]),
   brandBrief: z.string().max(500, "Brand brief must be at most 500 characters").trim().optional(),
+  whatTheySell: z.string().max(300, "What they sell must be at most 300 characters").trim().optional(),
+  city: z.string().max(80, "City must be at most 80 characters").trim().optional(),
   logoUrl: z.string().url("Invalid logo URL").optional().nullable(),
 });
 

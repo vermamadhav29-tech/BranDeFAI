@@ -24,3 +24,10 @@ export const generateProductPostsSchema = z.object({
 });
 
 export type GenerateProductPostsInput = z.infer<typeof generateProductPostsSchema>;
+
+export const lifestyleImageSchema = z.object({
+  brief: z.string().min(1, "Brief is required").max(500, "Brief must be 500 characters or fewer"),
+  brandId: z.string().uuid("brandId must be a valid UUID"),
+});
+
+export type LifestyleImageInput = z.infer<typeof lifestyleImageSchema>;

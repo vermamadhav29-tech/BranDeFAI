@@ -47,12 +47,14 @@ export async function generateText(
   systemPrompt: string,
   userPrompt: string,
   jsonMode = false,
-  maxTokens = 2000
+  maxTokens = 2000,
+  temperature?: number
 ): Promise<unknown> {
   const completion = await withRetry(() =>
     openai.chat.completions.create({
       model: "gpt-4o",
       max_tokens: maxTokens,
+      ...(temperature !== undefined ? { temperature } : {}),
       response_format: { type: jsonMode ? "json_object" : "text" } as { type: "json_object" | "text" },
       messages: [
         { role: "system", content: systemPrompt },

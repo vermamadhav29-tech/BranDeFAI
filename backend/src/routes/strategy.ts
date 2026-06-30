@@ -4,6 +4,7 @@ import { authMiddleware, AuthRequest } from "../middleware/auth";
 import { sendSuccess } from "../utils/response";
 import { createError } from "../middleware/errorHandler";
 import { generateStrategy, approveStrategy } from "../services/strategyService";
+import { deductCredits } from "../utils/creditUtils";
 import { createVideoProject, generateSceneMedia, getVideoProject, getStrategyProjects, suggestTransitions, compileProject, type TransitionSuggestion } from "../services/sceneService";
 import prisma from "../utils/prisma";
 
@@ -26,7 +27,7 @@ router.get("/", async (req: AuthRequest, res: Response, next: NextFunction): Pro
   }
 });
 
-// POST /api/strategy/generate — check credits, generate AI strategy (does NOT save)
+// POST /api/strategy/generate — deduct 5 credits, then generate AI strategy (does NOT save)
 router.post("/generate", async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const user = req.user!;
@@ -35,14 +36,21 @@ router.post("/generate", async (req: AuthRequest, res: Response, next: NextFunct
       return next(createError("Insufficient credits — strategy generation costs 5 credits", 402));
     }
 
+    const brand = await prisma.brand.findUnique({ where: { userId: user.id }, select: { id: true } });
+    if (!brand) return next(createError("Brand not found", 404));
+
     const strategy = await generateStrategy(user.id);
+
+    // Deduct after successful generation so a failed OpenAI call never costs credits
+    await deductCredits(prisma, user.id, 5, "STRATEGY", brand.id);
+
     sendSuccess(res, strategy);
   } catch (err) {
     next(err);
   }
 });
 
-// POST /api/strategy/approve — save strategy, mark approved, deduct 5 credits
+// POST /api/strategy/approve — save strategy and mark approved (credits already deducted at generate time)
 router.post("/approve", async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const strategyData = req.body;

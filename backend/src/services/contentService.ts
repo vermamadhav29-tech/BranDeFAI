@@ -2,6 +2,8 @@ import prisma from "../utils/prisma";
 import * as openaiService from "./ai/openaiService";
 import * as imageGenService from "./ai/imageGenService";
 import * as promptBuilder from "../utils/promptBuilder";
+import { getBrandContext } from "./brandDNA.service";
+import * as qualityGate from "./qualityGate.service";
 import { deductCredits } from "../utils/creditUtils";
 import { ImageSource, CreditType } from "@prisma/client";
 import { createError } from "../middleware/errorHandler";
@@ -39,6 +41,27 @@ export interface ContentBatchResult {
   reelIdeas: unknown;
   images: (string | null)[];
   keywords: string[];
+}
+
+export type GenerationGoal = "promotional" | "awareness" | "engagement";
+
+export interface CaptionVariant {
+  type: "emotional" | "offer_driven" | "festival_occasion";
+  hook: string;
+  body: string;
+  cta: string;
+  full_caption: string;
+  hashtags: string[];
+}
+
+interface CaptionGenerationResult {
+  captions: CaptionVariant[];
+  seo_keywords: string[];
+}
+
+export interface CaptionResponse {
+  caption: CaptionVariant;
+  hasMoreAlternates: boolean;
 }
 
 // ─── Prompts ──────────────────────────────────────────────────────────────────
@@ -83,13 +106,124 @@ REEL IDEA RULES — exactly 2 ideas, each with:
 
 KEYWORD RULES — exactly 10 searchable discovery terms for Instagram SEO. Mix English and Hinglish for Indian market discoverability. Specific to the brand's industry, products, and target audience.`;
 
-const REGEN_CAPTIONS_PROMPT = `Generate 3 fresh Instagram captions for this brand. Return ONLY a JSON object: { "captions": ["caption1", "caption2", "caption3"] }
+const CAPTION_SYSTEM_PROMPT = `You are the lead copywriter for a premium Indian brand. You write Instagram captions
+that sell without sounding salesy. You understand Indian consumer psychology deeply.
+Rules you always follow:
+- Open with a scroll-stopping hook (first line must make them stop scrolling)
+- Build desire in 2-3 lines using emotional language, not features
+- End with a clear CTA that matches Indian behavior (DM on WhatsApp, visit store, order now)
+- Match the brand voice EXACTLY from the Brand DNA provided
+- If the brand uses Hinglish, weave it in naturally — never forced
+- Never use hollow phrases: 'elevate your style', 'discover elegance', 'a cut above'
+- Be specific about the product, not vague
+- Write like a real person who loves this brand, not an AI
+Return ONLY valid JSON, no other text:
+{
+captions: [
+{ type: 'emotional', hook: string, body: string, cta: string, full_caption: string, hashtags: [5 lowercase strings] },
+{ type: 'offer_driven', hook: string, body: string, cta: string, full_caption: string, hashtags: [5 lowercase strings] },
+{ type: 'festival_occasion', hook: string, body: string, cta: string, full_caption: string, hashtags: [5 lowercase strings] }
+],
+seo_keywords: [10 relevant Instagram search keywords for this post]
+}`;
 
-Caption 1 (Emotional): Hook = personal, relatable, raw opening that creates immediate emotional connection. Body = 2-3 emotionally resonant lines. CTA = warm and inviting. End with exactly 5 lowercase hashtags (2 niche, 3 broad).
-Caption 2 (Aspirational): Hook = paints who the reader becomes. Body = 2-3 lines that elevate and inspire. CTA = transformation-focused. End with exactly 5 lowercase hashtags.
-Caption 3 (Direct/Offer): Hook = the product benefit or offer, no fluff. Body = 1-2 concrete reasons to act now. CTA = direct and action-driving (link in bio / DM us / Shop now). End with exactly 5 lowercase hashtags.
-Format each: [Hook line]\\n\\n[Body]\\n\\n[CTA]\\n\\n#tag1 #tag2 #tag3 #tag4 #tag5
-Max 150 words per caption. Reference the brand name naturally. Never generic, never hollow.`;
+const INDIAN_CONTEXT_BLOCK = `Writing for Indian audience. Peak posting: 8-10am, 12-2pm, 8-11pm IST.
+Include city hashtag like #DelhiFood or #MumbaiJewellery.
+WhatsApp CTAs convert 3x better than link-in-bio for Indian SMBs.`;
+
+function buildCaptionUserPrompt(brandDnaBlock: string, campaignBrief: string, goal: GenerationGoal): string {
+  return [brandDnaBlock, INDIAN_CONTEXT_BLOCK, campaignBrief, goal].join("\n");
+}
+
+// Heuristic hook-strength scorer used to pick "the highest-quality" caption —
+// rewards scroll-stopping length, pattern interrupts, and specificity; penalizes
+// the hollow phrases the system prompt explicitly bans.
+const HOLLOW_PHRASES = ["elevate your style", "discover elegance", "a cut above"];
+
+function scoreHookStrength(hook: string): number {
+  let score = 0;
+  const lower = hook.toLowerCase();
+
+  const len = hook.length;
+  if (len >= 25 && len <= 90) score += 3;
+  else if (len > 0) score += 1;
+
+  if (/[!?]/.test(hook)) score += 2;
+  if (/\d/.test(hook)) score += 1;
+  if (HOLLOW_PHRASES.some((p) => lower.includes(p))) score -= 5;
+
+  return score;
+}
+
+export function pickBestCaption(captions: CaptionVariant[]): { selected: CaptionVariant; alternates: CaptionVariant[] } {
+  let bestIndex = 0;
+  let bestScore = -Infinity;
+  captions.forEach((c, i) => {
+    const score = scoreHookStrength(c.hook);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
+  });
+  const selected = captions[bestIndex];
+  const alternates = captions.filter((_, i) => i !== bestIndex);
+  return { selected, alternates };
+}
+
+// Maps common industry keywords to a hashtag-friendly category word, e.g.
+// "Bakery & desserts" -> "Food", "Fine jewellery" -> "Jewellery".
+const CITY_HASHTAG_CATEGORIES: { keywords: string[]; tag: string }[] = [
+  { keywords: ["food", "restaurant", "cafe", "bakery", "gelato", "ice cream", "dessert", "sweet", "catering", "kitchen"], tag: "Food" },
+  { keywords: ["jewel"], tag: "Jewellery" },
+  { keywords: ["fashion", "apparel", "clothing", "boutique", "wear"], tag: "Fashion" },
+  { keywords: ["beauty", "cosmetic", "skincare", "salon", "spa"], tag: "Beauty" },
+  { keywords: ["fitness", "gym", "yoga", "wellness"], tag: "Fitness" },
+  { keywords: ["home", "decor", "furniture", "interior"], tag: "Decor" },
+  { keywords: ["tech", "software", "saas", "app"], tag: "Tech" },
+  { keywords: ["real estate", "realty", "property"], tag: "Realty" },
+];
+
+function getIndustryHashtagWord(industry?: string | null): string {
+  if (!industry) return "";
+  const lower = industry.toLowerCase();
+  const match = CITY_HASHTAG_CATEGORIES.find((c) => c.keywords.some((k) => lower.includes(k)));
+  if (match) return match.tag;
+
+  const firstWord = industry.trim().split(/\s+/)[0]?.replace(/[^a-zA-Z]/g, "");
+  if (!firstWord) return "";
+  return firstWord.charAt(0).toUpperCase() + firstWord.slice(1).toLowerCase();
+}
+
+function getCityHashtag(brand: { city?: string | null; industry?: string | null } | null): string | null {
+  if (!brand?.city) return null;
+  const cityPart = brand.city.trim().replace(/[^a-zA-Z]/g, "");
+  if (!cityPart) return null;
+  return `#${cityPart}${getIndustryHashtagWord(brand.industry)}`;
+}
+
+function buildShownHashtags(
+  caption: CaptionVariant,
+  brand: { id: string; city?: string | null; industry?: string | null }
+): string[] {
+  const cityTag = getCityHashtag(brand);
+  if (!cityTag) return caption.hashtags.slice(0, 5);
+  return [cityTag, ...caption.hashtags.filter((t) => t !== cityTag)].slice(0, 5);
+}
+
+export async function generateCaptionSet(
+  brandDnaBlock: string,
+  campaignBrief: string,
+  goal: GenerationGoal
+): Promise<CaptionGenerationResult> {
+  const userPrompt = buildCaptionUserPrompt(brandDnaBlock, campaignBrief, goal);
+  return (await openaiService.generateText(
+    CAPTION_SYSTEM_PROMPT,
+    userPrompt,
+    true,
+    2000,
+    0.9
+  )) as CaptionGenerationResult;
+}
 
 const REGEN_ADCOPY_PROMPT = `Generate fresh Meta ad copy for this brand. Return ONLY a JSON object with exactly this shape:
 {
@@ -243,34 +377,115 @@ export async function generateContentBatch(
 }
 
 // ─── regenerateCaptions ───────────────────────────────────────────────────────
+// Generates 3 fresh captions (emotional / offer_driven / festival_occasion), runs
+// each through the silent AI quality gate (in parallel), swaps in the improved
+// version where the gate demands it, and picks the highest-scoring one. The
+// other 2 + all 10 SEO keywords are stored as alternates so "show me another"
+// can serve them without another AI call. Quality scores are logged internally
+// and never returned to the caller.
 
 export async function regenerateCaptions(
   contentId: string,
-  userId: string
-): Promise<string[]> {
+  userId: string,
+  campaignBrief = "",
+  goal: GenerationGoal = "promotional"
+): Promise<CaptionResponse> {
   const content = await prisma.generatedContent.findFirst({
     where: { id: contentId, userId },
     include: { brand: true },
   });
   if (!content) throw createError("Content not found", 404);
 
-  const systemPrompt = promptBuilder.buildContentSystemPrompt(
-    content.brand,
-    content.brand.strategyData
+  const brandDnaBlock = await getBrandContext(content.brandId, campaignBrief);
+  const result = await generateCaptionSet(brandDnaBlock, campaignBrief, goal);
+
+  // Silent quality gate — review all 3 candidates in parallel, not sequentially,
+  // so this adds latency only once (not 3x) on top of generation.
+  const reviews = await Promise.all(
+    result.captions.map((c) => qualityGate.reviewContent(c.full_caption, brandDnaBlock))
   );
 
-  const result = (await openaiService.generateText(systemPrompt, REGEN_CAPTIONS_PROMPT, true)) as {
-    captions: string[];
-  };
+  const reviewedCaptions: CaptionVariant[] = result.captions.map((c, i) => {
+    const review = reviews[i];
+    return review.needs_improvement && review.improved_version
+      ? { ...c, full_caption: review.improved_version }
+      : c;
+  });
+
+  let bestIndex = 0;
+  reviews.forEach((r, i) => {
+    if (r.overall_score > reviews[bestIndex].overall_score) bestIndex = i;
+  });
+
+  const selected = reviewedCaptions[bestIndex];
+  const alternates = reviewedCaptions.filter((_, i) => i !== bestIndex);
+  const shownHashtags = buildShownHashtags(selected, content.brand);
+  const selectedWithShownTags: CaptionVariant = { ...selected, hashtags: shownHashtags };
 
   await prisma.generatedContent.update({
     where: { id: contentId },
-    data: { captions: JSON.parse(JSON.stringify(result.captions)) },
+    data: {
+      captions: JSON.parse(JSON.stringify([selectedWithShownTags.full_caption])),
+      captionSelected: JSON.parse(JSON.stringify(selectedWithShownTags)),
+      captionAlternates: JSON.parse(JSON.stringify(alternates)),
+      seoKeywords: JSON.parse(JSON.stringify(result.seo_keywords)),
+      captionAltIndex: 0,
+    },
+  });
+
+  // Internal-only analysis log — never surfaced via any API response.
+  await prisma.contentQualityLog.createMany({
+    data: reviews.map((r, i) => ({
+      contentId,
+      brandId: content.brandId,
+      userId,
+      scores: JSON.parse(
+        JSON.stringify({ overall_score: r.overall_score, ...r.scores, captionType: result.captions[i].type })
+      ),
+      needsImprovement: r.needs_improvement,
+    })),
   });
 
   await deductCredits(prisma, userId, 2, CreditType.GENERATION, contentId);
 
-  return result.captions;
+  return { caption: selectedWithShownTags, hasMoreAlternates: alternates.length > 0 };
+}
+
+// ─── getNextCaptionAlternate ──────────────────────────────────────────────────
+// Serves the next stored alternate version — no AI call, no credit charge.
+
+export async function getNextCaptionAlternate(
+  contentId: string,
+  userId: string
+): Promise<CaptionResponse> {
+  const content = await prisma.generatedContent.findFirst({
+    where: { id: contentId, userId },
+    include: { brand: true },
+  });
+  if (!content) throw createError("Content not found", 404);
+
+  const alternates = (content.captionAlternates as unknown as CaptionVariant[] | null) ?? [];
+  const cursor = content.captionAltIndex;
+
+  if (cursor >= alternates.length) {
+    throw createError("No more alternate versions. Regenerate for fresh captions.", 404);
+  }
+
+  const next = alternates[cursor];
+  const shownHashtags = buildShownHashtags(next, content.brand);
+  const nextWithShownTags: CaptionVariant = { ...next, hashtags: shownHashtags };
+  const nextCursor = cursor + 1;
+
+  await prisma.generatedContent.update({
+    where: { id: contentId },
+    data: {
+      captions: JSON.parse(JSON.stringify([nextWithShownTags.full_caption])),
+      captionSelected: JSON.parse(JSON.stringify(nextWithShownTags)),
+      captionAltIndex: nextCursor,
+    },
+  });
+
+  return { caption: nextWithShownTags, hasMoreAlternates: nextCursor < alternates.length };
 }
 
 // ─── regenerateAdCopy ─────────────────────────────────────────────────────────

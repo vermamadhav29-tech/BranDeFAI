@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { authMiddleware } from "../middleware/auth";
 import { validate } from "../middleware/validate";
-import { generateContentSchema } from "../middleware/validators/contentSchemas";
+import { generateContentSchema, regenerateCaptionSchema } from "../middleware/validators/contentSchemas";
 import {
   generateContent,
   listContent,
@@ -9,6 +9,7 @@ import {
   getLatestContent,
   getContent,
   regenerateCaption,
+  getNextCaptionAlternate,
   regenerateAdCopy,
 } from "../controllers/contentController";
 
@@ -38,7 +39,8 @@ router.get("/", listContent);
 router.post("/generate", generationTimeout, validate(generateContentSchema), generateContent);
 
 router.get("/:id", getContent);
-router.post("/:id/regenerate-caption", regenerateCaption);
+router.post("/:id/regenerate-caption", validate(regenerateCaptionSchema), regenerateCaption);
+router.post("/:id/caption/next-alternate", getNextCaptionAlternate);
 router.post("/:id/regenerate-adcopy", regenerateAdCopy);
 
 export default router;

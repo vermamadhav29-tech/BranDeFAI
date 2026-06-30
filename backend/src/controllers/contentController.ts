@@ -4,7 +4,7 @@ import * as contentService from "../services/contentService";
 import { sendSuccess } from "../utils/response";
 import { createError } from "../middleware/errorHandler";
 import { AuthRequest } from "../middleware/auth";
-import type { GenerateContentInput } from "../middleware/validators/contentSchemas";
+import type { GenerateContentInput, RegenerateCaptionInput } from "../middleware/validators/contentSchemas";
 
 // ─── POST /api/content/generate ───────────────────────────────────────────────
 
@@ -133,8 +133,24 @@ export async function regenerateCaption(
       return next(createError("Insufficient credits. You need at least 2 credits.", 402));
     }
 
-    const captions = await contentService.regenerateCaptions(String(req.params.id), user.id);
-    sendSuccess(res, { captions });
+    const { campaignBrief, goal } = req.body as RegenerateCaptionInput;
+    const result = await contentService.regenerateCaptions(String(req.params.id), user.id, campaignBrief, goal);
+    sendSuccess(res, result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── POST /api/content/:id/caption/next-alternate ─────────────────────────────
+
+export async function getNextCaptionAlternate(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const result = await contentService.getNextCaptionAlternate(String(req.params.id), req.user!.id);
+    sendSuccess(res, result);
   } catch (err) {
     next(err);
   }

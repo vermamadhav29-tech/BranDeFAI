@@ -1,13 +1,13 @@
 import { Router } from "express";
-import { authenticate, AuthRequest } from "../middleware/authenticate";
+import { authMiddleware, AuthRequest } from "../middleware/auth";
 import { sendSuccess } from "../utils/response";
 import prisma from "../utils/prisma";
 
 const router = Router();
 
-router.get("/trends", authenticate, async (req: AuthRequest, res, next) => {
+router.get("/trends", authMiddleware, async (req: AuthRequest, res, next) => {
   try {
-    const userId = req.userId!;
+    const userId = req.user!.id;
 
     // Build array of the last 7 days (oldest first)
     const days: Date[] = Array.from({ length: 7 }, (_, i) => {

@@ -1,7 +1,6 @@
 import prisma from "../utils/prisma";
 import { generateText } from "./ai/openaiService";
 import { buildBrandSystemPrompt } from "../utils/promptBuilder";
-import { deductCredits } from "../utils/creditUtils";
 import { createError } from "../middleware/errorHandler";
 import type { Brand } from "@prisma/client";
 
@@ -163,8 +162,6 @@ export async function approveStrategy(
 ): Promise<Brand> {
   const brand = await prisma.brand.findUnique({ where: { userId } });
   if (!brand) throw createError("Brand not found", 404);
-
-  await deductCredits(prisma, userId, 5, "STRATEGY", brand.id);
 
   const updated = await prisma.brand.update({
     where: { userId },

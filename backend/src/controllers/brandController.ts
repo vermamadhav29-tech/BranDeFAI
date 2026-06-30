@@ -4,6 +4,7 @@ import { sendSuccess } from "../utils/response";
 import { createError } from "../middleware/errorHandler";
 import { AuthRequest } from "../middleware/auth";
 import { generateText } from "../services/ai/openaiService";
+import { generateBrandDNA } from "../services/brandDNA.service";
 import type { BrandInput, LogoUrlInput, GenerateFieldInput } from "../middleware/validators/brandSchemas";
 
 // ─── Voice Summary Helper ─────────────────────────────────────────────────────
@@ -40,7 +41,7 @@ export async function createBrand(req: AuthRequest, res: Response, next: NextFun
       return next(createError("Brand already exists for this account", 409));
     }
 
-    const { brandName, industry, targetAudience, tone, platforms, brandBrief, logoUrl } = req.body as BrandInput;
+    const { brandName, industry, targetAudience, tone, platforms, brandBrief, whatTheySell, city, logoUrl } = req.body as BrandInput;
 
     const brand = await prisma.brand.create({
       data: {
@@ -51,6 +52,8 @@ export async function createBrand(req: AuthRequest, res: Response, next: NextFun
         tone,
         platforms: platforms ?? [],
         brandBrief: brandBrief ?? null,
+        whatTheySell: whatTheySell ?? null,
+        city: city ?? null,
         logoUrl: logoUrl ?? null,
       },
     });
@@ -59,6 +62,22 @@ export async function createBrand(req: AuthRequest, res: Response, next: NextFun
     generateVoiceSummaryText(brand)
       .then((summary) =>
         prisma.brand.update({ where: { id: brand.id }, data: { voiceSummary: summary.trim() } })
+      )
+      .catch(() => {});
+
+    // Fire-and-forget — generate Brand DNA in background without blocking onboarding
+    generateBrandDNA({
+      brandName: brand.brandName,
+      whatTheySell: brand.whatTheySell,
+      brandBrief: brand.brandBrief,
+      industry: brand.industry,
+      brandVibe: brand.tone,
+    })
+      .then((dna) =>
+        prisma.brand.update({
+          where: { id: brand.id },
+          data: { brandDna: JSON.stringify(dna), brandVibe: brand.tone },
+        })
       )
       .catch(() => {});
 
@@ -152,6 +171,33 @@ export async function regenerateVoiceSummary(req: AuthRequest, res: Response, ne
     });
 
     sendSuccess(res, { voiceSummary: updated.voiceSummary });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── POST /api/brand/refresh-dna ─────────────────────────────────────────────
+// Regenerates the Brand DNA profile from the current brand profile.
+
+export async function refreshBrandDNA(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const existing = await prisma.brand.findUnique({ where: { userId: req.user!.id } });
+    if (!existing) return next(createError("Brand not found", 404));
+
+    const dna = await generateBrandDNA({
+      brandName: existing.brandName,
+      whatTheySell: existing.whatTheySell,
+      brandBrief: existing.brandBrief,
+      industry: existing.industry,
+      brandVibe: existing.brandVibe || existing.tone,
+    });
+
+    const updated = await prisma.brand.update({
+      where: { userId: req.user!.id },
+      data: { brandDna: JSON.stringify(dna) },
+    });
+
+    sendSuccess(res, { brandDna: JSON.parse(updated.brandDna as string) });
   } catch (err) {
     next(err);
   }
