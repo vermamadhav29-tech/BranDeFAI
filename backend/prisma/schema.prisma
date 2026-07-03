@@ -103,6 +103,10 @@ model Brand {
   voiceSummary     String?
   brandVibe        String?
   brandDna         String?
+  logoColorPrimary   String?
+  logoColorSecondary String?
+  instagramUrl       String?
+  websiteUrl         String?
   strategyApproved Boolean  @default(false)
   strategyData     Json?
   createdAt        DateTime @default(now())

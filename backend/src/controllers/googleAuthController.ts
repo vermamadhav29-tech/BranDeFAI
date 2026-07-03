@@ -93,7 +93,7 @@ export async function googleCallback(req: Request, res: Response): Promise<void>
     // The frontend /auth/callback page POSTs the token back to /api/auth/exchange,
     // which sets the real session cookie via a direct XHR (same as email/password login).
     const exchangeToken = signExchangeToken(user.id);
-    const brand = await prisma.brand.findUnique({ where: { userId: user.id } });
+    const brand = await prisma.brand.findFirst({ where: { userId: user.id } });
     const next = brand ? "dashboard" : "brand-setup";
     const destination = `${frontendUrl}/callback?token=${exchangeToken}&next=${next}`;
     console.log(`[Google OAuth] redirecting to exchange callback, next=${next}`);

@@ -31,3 +31,12 @@ export const lifestyleImageSchema = z.object({
 });
 
 export type LifestyleImageInput = z.infer<typeof lifestyleImageSchema>;
+
+export const promoCreativeSchema = z.object({
+  brief: z.string().min(1, "Brief is required").max(500, "Brief must be 500 characters or fewer"),
+  cta_text: z.string().min(1, "CTA text is required").max(60, "CTA text must be 60 characters or fewer"),
+  brandId: z.string().uuid("brandId must be a valid UUID"),
+  occasion: z.string().max(40, "Occasion must be 40 characters or fewer").optional(),
+});
+
+export type PromoCreativeInput = z.infer<typeof promoCreativeSchema>;

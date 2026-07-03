@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { createError } from "../../middleware/errorHandler";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+export const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ─── Retry wrapper — retries once after 3 s on 429 ────────────────────────────
 

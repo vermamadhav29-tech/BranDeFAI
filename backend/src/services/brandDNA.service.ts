@@ -1,5 +1,6 @@
+// URL analysis uses GPT-4o web browsing — no third-party scraper needed.
 import prisma from "../utils/prisma";
-import { generateText } from "./ai/openaiService";
+import { generateText, openai } from "./ai/openaiService";
 import { createError } from "../middleware/errorHandler";
 
 const BRAND_DNA_SYSTEM_PROMPT = `You are a senior brand strategist for Indian businesses. Based on minimal brand details,
@@ -24,6 +25,7 @@ export interface BrandDNAInput {
   brandBrief?: string | null;
   industry?: string | null;
   brandVibe: string;
+  url?: string;
 }
 
 export interface BrandDNA {
@@ -40,16 +42,92 @@ export interface BrandDNA {
   sample_caption: string;
 }
 
+// ─── URL brand analysis via GPT-4o web browsing ───────────────────────────────
+// Tries Responses API with web_search_preview first; falls back to URL-only
+// inference if the tool is unavailable. Always returns "" on any failure —
+// never blocks onboarding.
+
+const URL_ANALYST_PROMPT =
+  `You are a brand analyst. Visit the URL provided and analyse the brand. ` +
+  `Extract: what they sell, their tone of voice, the kind of language they use, ` +
+  `their visual aesthetic described in words, who their target customer appears to be, ` +
+  `and any recurring themes or messaging you notice. ` +
+  `Return ONLY a plain text summary of 150-200 words. No JSON. No bullet points. ` +
+  `Write it as a paragraph a copywriter could read to understand this brand.`;
+
+const URL_FALLBACK_PROMPT =
+  `Based on this URL alone (you cannot browse it), infer what you can about ` +
+  `this brand from the URL structure, domain name, and any patterns you recognise. ` +
+  `Return a 2-3 sentence inference. Make clear this is inferred, not confirmed.`;
+
+export async function analyseUrlForBrandContext(url: string): Promise<string> {
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+
+  // Primary path: Responses API with web_search_preview
+  try {
+    const response = await openai.responses.create(
+      {
+        model: "gpt-4o",
+        tools: [{ type: "web_search_preview" }],
+        instructions: URL_ANALYST_PROMPT,
+        input: `Analyse this brand: ${trimmed}`,
+        max_output_tokens: 400,
+      },
+      { signal: AbortSignal.timeout(30_000) }
+    );
+
+    type OutputItem = { type: string; content?: { type: string; text?: string }[] };
+    const text = (response.output as OutputItem[])
+      .filter((item) => item.type === "message")
+      .flatMap((item) => item.content ?? [])
+      .filter((c) => c.type === "output_text")
+      .map((c) => (c.text ?? "").trim())
+      .filter(Boolean)
+      .join(" ");
+
+    if (text) return `BRAND ANALYSIS FROM THEIR PAGE:\n${text}`;
+  } catch {
+    // Responses API unavailable or timed out — fall through to URL-only fallback
+  }
+
+  // Fallback: URL-only inference via chat completions (zero extra cost)
+  try {
+    const fallback = (await generateText(
+      URL_FALLBACK_PROMPT,
+      `Brand URL: ${trimmed}`,
+      false,
+      200
+    )) as string;
+    const cleaned = fallback?.trim() ?? "";
+    if (cleaned) return `BRAND ANALYSIS FROM THEIR PAGE:\n${cleaned}`;
+  } catch {
+    // Ignore — never block onboarding
+  }
+
+  return "";
+}
+
+// ─── generateBrandDNA ─────────────────────────────────────────────────────────
+
 export async function generateBrandDNA(brandData: BrandDNAInput): Promise<BrandDNA> {
-  const { brandName, brandVibe } = brandData;
+  const { brandName, brandVibe, url } = brandData;
   const whatTheySell = brandData.whatTheySell || brandData.brandBrief || brandData.industry || "";
 
-  const userPrompt = [
+  const parts: string[] = [
     `Business name: ${brandName}`,
     `What they sell: ${whatTheySell}`,
     `Brand vibe: ${brandVibe}`,
-    `Generate a complete Brand DNA profile for this Indian business.`,
-  ].join("\n");
+  ];
+
+  if (url) {
+    const urlContext = await analyseUrlForBrandContext(url);
+    if (urlContext) parts.push(urlContext);
+  }
+
+  parts.push("Using ALL of the above, generate a complete Brand DNA profile for this Indian business.");
+
+  const userPrompt = parts.join("\n");
 
   return (await generateText(BRAND_DNA_SYSTEM_PROMPT, userPrompt, true, 2000)) as BrandDNA;
 }

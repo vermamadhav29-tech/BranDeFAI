@@ -22,6 +22,8 @@ export const brandSchema = z.object({
   whatTheySell: z.string().max(300, "What they sell must be at most 300 characters").trim().optional(),
   city: z.string().max(80, "City must be at most 80 characters").trim().optional(),
   logoUrl: z.string().url("Invalid logo URL").optional().nullable(),
+  instagramUrl: z.string().max(200, "Instagram URL must be at most 200 characters").trim().optional(),
+  websiteUrl: z.string().max(200, "Website URL must be at most 200 characters").trim().optional(),
 });
 
 export const logoUrlSchema = z.object({

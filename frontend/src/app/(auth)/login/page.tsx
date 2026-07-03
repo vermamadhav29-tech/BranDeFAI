@@ -274,18 +274,13 @@ function SignInForm({ onShake }: { onShake: () => void }) {
     try {
       const res = await apiClient.post<{
         success: boolean;
-        data: { userId: string; email: string; plan: string; creditsBalance: number };
+        data: { userId: string; email: string; plan: string; creditsBalance: number; isOnboarded: boolean };
         error: string | null;
       }>("/api/auth/login", data);
       if (res.data.success) {
-        const { userId, email, plan, creditsBalance } = res.data.data;
+        const { userId, email, plan, creditsBalance, isOnboarded } = res.data.data;
         setUser({ id: userId, email, plan, creditsBalance });
-        try {
-          const brand = await apiClient.get<{ success: boolean; data: unknown }>("/api/brand");
-          router.push(brand.data.success && brand.data.data ? "/dashboard" : "/brand-setup");
-        } catch {
-          router.push("/brand-setup");
-        }
+        router.push(isOnboarded ? "/dashboard" : "/brand-setup");
       }
     } catch (err: unknown) {
       const message =

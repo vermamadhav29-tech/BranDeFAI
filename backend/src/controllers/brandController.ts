@@ -5,6 +5,7 @@ import { createError } from "../middleware/errorHandler";
 import { AuthRequest } from "../middleware/auth";
 import { generateText } from "../services/ai/openaiService";
 import { generateBrandDNA } from "../services/brandDNA.service";
+import { extractBrandColorFromLogo } from "../services/promoCreative.service";
 import type { BrandInput, LogoUrlInput, GenerateFieldInput } from "../middleware/validators/brandSchemas";
 
 // ─── Voice Summary Helper ─────────────────────────────────────────────────────
@@ -41,7 +42,7 @@ export async function createBrand(req: AuthRequest, res: Response, next: NextFun
       return next(createError("Brand already exists for this account", 409));
     }
 
-    const { brandName, industry, targetAudience, tone, platforms, brandBrief, whatTheySell, city, logoUrl } = req.body as BrandInput;
+    const { brandName, industry, targetAudience, tone, platforms, brandBrief, whatTheySell, city, logoUrl, instagramUrl, websiteUrl } = req.body as BrandInput;
 
     const brand = await prisma.brand.create({
       data: {
@@ -52,9 +53,11 @@ export async function createBrand(req: AuthRequest, res: Response, next: NextFun
         tone,
         platforms: platforms ?? [],
         brandBrief: brandBrief ?? null,
-        whatTheySell: whatTheySell ?? null,
+        whatTheySell: whatTheySell ?? brandBrief ?? null,
         city: city ?? null,
         logoUrl: logoUrl ?? null,
+        instagramUrl: instagramUrl ?? null,
+        websiteUrl: websiteUrl ?? null,
       },
     });
 
@@ -65,21 +68,23 @@ export async function createBrand(req: AuthRequest, res: Response, next: NextFun
       )
       .catch(() => {});
 
-    // Fire-and-forget — generate Brand DNA in background without blocking onboarding
-    generateBrandDNA({
-      brandName: brand.brandName,
-      whatTheySell: brand.whatTheySell,
-      brandBrief: brand.brandBrief,
-      industry: brand.industry,
-      brandVibe: brand.tone,
-    })
-      .then((dna) =>
-        prisma.brand.update({
-          where: { id: brand.id },
-          data: { brandDna: JSON.stringify(dna), brandVibe: brand.tone },
-        })
-      )
-      .catch(() => {});
+    // Fire-and-forget — analyse brand URL (if provided) then generate Brand DNA.
+    // analyseUrlForBrandContext has its own timeout and never throws, so this
+    // never blocks onboarding. instagramUrl is preferred over websiteUrl.
+    (async () => {
+      const dna = await generateBrandDNA({
+        brandName: brand.brandName,
+        whatTheySell: brand.whatTheySell,
+        brandBrief: brand.brandBrief,
+        industry: brand.industry,
+        brandVibe: brand.tone,
+        url: instagramUrl ?? websiteUrl ?? undefined,
+      });
+      await prisma.brand.update({
+        where: { id: brand.id },
+        data: { brandDna: JSON.stringify(dna), brandVibe: brand.tone },
+      });
+    })().catch(() => {});
 
     sendSuccess(res, brand, 201);
   } catch (err) {
@@ -198,6 +203,19 @@ export async function refreshBrandDNA(req: AuthRequest, res: Response, next: Nex
     });
 
     sendSuccess(res, { brandDna: JSON.parse(updated.brandDna as string) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─── POST /api/brand/extract-color ───────────────────────────────────────────
+// Extracts the dominant + secondary color from the current brand's logo and
+// saves them to the brand record. Call automatically after a logo upload.
+
+export async function extractBrandColor(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const colors = await extractBrandColorFromLogo(req.user!.id);
+    sendSuccess(res, colors);
   } catch (err) {
     next(err);
   }

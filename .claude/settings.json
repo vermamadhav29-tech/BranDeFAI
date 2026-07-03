@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -i -b /c/Users/MADHAB/AppData/Local/Temp/claude/c--Users-MADHAB-Desktop-Brandefai/ff9bd23b-ef81-44a0-a33e-bfc764acf4f8/scratchpad/brandefai_live_cookies.txt -X POST https://brandefai-production.up.railway.app/api/images/lifestyle -H 'Content-Type: application/json' --max-time 170 -d '{\"brief\":\"handmade mango gelato in a glass cup, Delhi cafe setting\",\"brandId\":\"25089e78-5f39-4936-b2f0-f7c498972ef3\"}')",
+      "Bash(npm ls *)",
+      "Bash(node -e \"console.log\\(require\\('replicate/package.json'\\).version\\)\")",
+      "Bash(xargs grep -l \"FileOutput\")",
+      "Bash(python3 -c ' *)",
+      "Bash(node -e ' *)",
+      "Bash(curl -s -o \"C:\\\\Users\\\\MADHAB\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-MADHAB-Desktop-Brandefai\\\\ff9bd23b-ef81-44a0-a33e-bfc764acf4f8\\\\scratchpad\\\\promo_test.jpg\" \"https://res.cloudinary.com/dsidv1cmg/image/upload/v1782835091/brandefai/promo/pax06dqnnta84aa2kgah.jpg\")",
+      "Bash(rm \"c:\\\\Users\\\\MADHAB\\\\Desktop\\\\Brandefai\\\\backend\\\\debug_banner.png\")",
+      "Bash(curl -s -o \"C:\\\\Users\\\\MADHAB\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-MADHAB-Desktop-Brandefai\\\\ff9bd23b-ef81-44a0-a33e-bfc764acf4f8\\\\scratchpad\\\\promo_v2.jpg\" \"https://res.cloudinary.com/dsidv1cmg/image/upload/v1783093659/brandefai/promo/wdloxqxqfjhfcp5peqjj.jpg\")",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('axios:', p.dependencies.axios, 'replicate:', p.dependencies.replicate\\)\")",
+      "Bash(node -e \"require\\('dotenv'\\).config\\({quiet:true}\\); console.log\\('APIFY_API_TOKEN set:', !!process.env.APIFY_API_TOKEN\\);\")",
+      "PowerShell(cd \"C:\\\\Users\\\\MADHAB\\\\Desktop\\\\Brandefai\\\\frontend\"; npx tsc --noEmit 2>&1 | Where-Object { $_ -notmatch '\\\\.next' } | Select-Object -First 30)",
+      "PowerShell(cd \"C:\\\\Users\\\\MADHAB\\\\Desktop\\\\Brandefai\\\\frontend\"; npx tsc --noEmit 2>&1 | Where-Object { $_ -notmatch '\\\\.next' })"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\MADHAB\\Desktop\\Brandefai\\backend"
+    ]
+  }
+}

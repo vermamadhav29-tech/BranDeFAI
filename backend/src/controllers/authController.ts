@@ -44,6 +44,9 @@ export async function login(req: AuthRequest, res: Response, next: NextFunction)
       return next(createError("Invalid credentials", 401));
     }
 
+    const brand = await prisma.brand.findFirst({ where: { userId: user.id } });
+    const isOnboarded = !!brand;
+
     const token = signToken(user.id);
     res.cookie(COOKIE_NAME, token, COOKIE_OPTIONS);
     sendSuccess(res, {
@@ -51,6 +54,7 @@ export async function login(req: AuthRequest, res: Response, next: NextFunction)
       email: user.email,
       plan: user.plan,
       creditsBalance: user.creditsBalance,
+      isOnboarded,
     });
   } catch (err) {
     next(err);
@@ -82,13 +86,17 @@ export async function exchange(req: AuthRequest, res: Response, next: NextFuncti
     });
     if (!user) return next(createError("User not found", 401));
 
-    console.log(`[auth/exchange] userId=${user.id} plan=${user.plan}`);
+    const brand = await prisma.brand.findFirst({ where: { userId } });
+    const isOnboarded = !!brand;
+
+    console.log(`[auth/exchange] userId=${user.id} plan=${user.plan} isOnboarded=${isOnboarded}`);
     res.cookie(COOKIE_NAME, signToken(user.id), COOKIE_OPTIONS);
     sendSuccess(res, {
       userId: user.id,
       email: user.email,
       plan: user.plan,
       creditsBalance: user.creditsBalance,
+      isOnboarded,
     });
   } catch (err) {
     next(err);

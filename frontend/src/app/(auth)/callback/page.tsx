@@ -20,9 +20,8 @@ function CallbackHandler() {
     ran.current = true;
 
     const token = searchParams.get("token");
-    const next = searchParams.get("next") ?? "dashboard";
 
-    console.log("[auth/callback] exchange start — token present:", !!token, "| next:", next);
+    console.log("[auth/callback] exchange start — token present:", !!token);
 
     if (!token) {
       console.error("[auth/callback] no exchange token in URL — full href:", window.location.href);
@@ -33,16 +32,17 @@ function CallbackHandler() {
     apiClient
       .post<{
         success: boolean;
-        data: { userId: string; email: string; plan: string; creditsBalance: number };
+        data: { userId: string; email: string; plan: string; creditsBalance: number; isOnboarded: boolean };
         error: string | null;
       }>("/api/auth/exchange", { token })
       .then((res) => {
         console.log("[auth/callback] exchange resolved — status:", res.status, "body:", res.data);
         if (res.data.success) {
-          const { userId, email, plan, creditsBalance } = res.data.data;
-          console.log(`[auth/callback] redirecting → /${next} (userId=${userId} plan=${plan})`);
+          const { userId, email, plan, creditsBalance, isOnboarded } = res.data.data;
+          const dest = isOnboarded ? "/dashboard" : "/brand-setup";
+          console.log(`[auth/callback] redirecting → ${dest} (userId=${userId} isOnboarded=${isOnboarded})`);
           setUser({ id: userId, email, plan, creditsBalance });
-          router.replace(`/${next}`);
+          router.replace(dest);
         } else {
           console.error("[auth/callback] exchange success:false —", res.data.error);
           router.replace("/login?error=google_failed");
