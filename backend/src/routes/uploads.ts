@@ -1,7 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
 import { authMiddleware } from "../middleware/auth";
-import { uploadProductImage, uploadVideoClip, uploadBrandLogo, bulkUploadProductImages } from "../controllers/uploadController";
+import { uploadProductImage, uploadVideoClip, uploadBrandLogo, bulkUploadProductImages, listProductImages } from "../controllers/uploadController";
 import { createError } from "../middleware/errorHandler";
 
 const router = Router();
@@ -66,6 +66,7 @@ const bulkProductImageUpload = multer({
   },
 });
 
+router.get("/product-images",  authMiddleware, listProductImages);
 router.post("/product-image", authMiddleware, productImageUpload.single("image"), uploadProductImage);
 router.post("/bulk-product-images", authMiddleware, bulkProductImageUpload.array("images", 15), bulkUploadProductImages);
 router.post("/brand-logo", authMiddleware, logoUpload.single("logo"), uploadBrandLogo);

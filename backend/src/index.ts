@@ -18,9 +18,11 @@ import creditsRoutes from "./routes/credits";
 import uploadsRoutes from "./routes/uploads";
 import instagramRoutes from "./routes/instagram";
 import dashboardRoutes from "./routes/dashboard";
+import creativeRoutes from "./routes/creative";
 import { errorHandler } from "./middleware/errorHandler";
 import "./jobs/videoExportWorker"; // starts the BullMQ worker process
 import { startCreditRefreshJob } from "./jobs/creditRefreshJob";
+import { startAutoCreativeJob } from "./jobs/autoCreativeJob";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -92,11 +94,13 @@ app.use("/api/credits", creditsRoutes);
 app.use("/api/uploads", uploadsRoutes);
 app.use("/api/instagram", instagramRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/creative",  creativeRoutes);
 
 // Global error handler
 app.use(errorHandler);
 
 startCreditRefreshJob();
+startAutoCreativeJob();
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

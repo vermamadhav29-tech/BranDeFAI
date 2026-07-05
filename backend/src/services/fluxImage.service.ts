@@ -176,6 +176,21 @@ async function uploadRemoteImageToCloudinary(imageUrl: string): Promise<string> 
   });
 }
 
+// ─── generateFluxBackground ───────────────────────────────────────────────────────
+// Generates a background scene via Flux 2 Pro and returns the raw image buffer.
+// No DB row, no credit deduction — caller handles those.
+
+export async function generateFluxBackground(scenePrompt: string): Promise<Buffer> {
+  const negativePrompt =
+    "text, letters, words, logos, watermarks, cartoonish, CGI, 3D render, distorted";
+  const { pollingUrl } = await submitFluxJob(scenePrompt, negativePrompt);
+  const fluxUrl = await pollFluxResult(pollingUrl);
+  const res = await fetch(fluxUrl);
+  if (!res.ok) throw new Error(`Failed to download Flux image (${res.status})`);
+  const arrayBuffer = await res.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
 // ─── generateLifestyleImage ──────────────────────────────────────────────────────
 // Public entry point: builds the prompt, calls Flux 2 Pro, polls for the result,
 // uploads to Cloudinary, saves a GeneratedImage row, and deducts credits.

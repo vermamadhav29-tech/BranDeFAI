@@ -6,6 +6,7 @@ import { analyzeImage } from "../services/ai/openaiService";
 import { sendSuccess } from "../utils/response";
 import { createError } from "../middleware/errorHandler";
 import { AuthRequest } from "../middleware/auth";
+import { generateAutoCreative } from "../services/autoCreative.service";
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -49,6 +50,34 @@ function streamUploadClip(buffer: Buffer, mimetype: string): Promise<UploadApiRe
   });
 }
 
+// ─── GET /api/uploads/product-images ────────────────────────────────────────
+// Returns all product images for the authenticated user's brand.
+
+export async function listProductImages(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    const brand = await prisma.brand.findUnique({ where: { userId } });
+    if (!brand) {
+      sendSuccess(res, { images: [] });
+      return;
+    }
+
+    const images = await prisma.productImage.findMany({
+      where: { brandId: brand.id },
+      orderBy: { uploadedAt: "desc" },
+      select: { id: true, imageUrl: true, uploadedAt: true },
+    });
+
+    sendSuccess(res, { images });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function uploadProductImage(
   req: AuthRequest,
   res: Response,
@@ -90,6 +119,9 @@ export async function uploadProductImage(
       },
       201
     );
+
+    // Fire-and-forget: generate auto-creative post in background
+    generateAutoCreative(brand.id, userId, "new_product", updated.id).catch(() => {});
   } catch (err) {
     next(err);
   }

@@ -18,6 +18,7 @@ import {
   ExternalLink,
   UploadCloud,
   ArrowRight,
+  Clock,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { useBrandStore } from "@/stores/brandStore";
@@ -241,6 +242,165 @@ function UploadZone({ file, preview, onSelect, onRemove }: UploadZoneProps) {
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Ready for You section ────────────────────────────────────────────────────
+
+type PostStatus = "PENDING_APPROVAL" | "APPROVED" | "SCHEDULED" | "POSTED";
+
+interface PendingPost {
+  id: string;
+  imageUrl: string;
+  caption: string | null;
+  occasionName: string | null;
+  occasionEmoji: string | null;
+  status: PostStatus;
+}
+
+function ReadyForYouSection() {
+  const [posts, setPosts] = useState<PendingPost[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiClient
+      .get<{ success: boolean; data: { posts: PendingPost[] } }>(
+        "/api/creative/posts?status=PENDING_APPROVAL&limit=3"
+      )
+      .then((res) => {
+        if (res.data.success && res.data.data?.posts) {
+          setPosts(res.data.data.posts.slice(0, 3));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  }, []);
+
+  async function handleApprove(postId: string) {
+    setApprovingId(postId);
+    try {
+      await apiClient.patch(`/api/creative/posts/${postId}/status`, { status: "APPROVED" });
+      setPosts((prev) => prev.filter((p) => p.id !== postId));
+    } catch {
+      // silently ignore
+    } finally {
+      setApprovingId(null);
+    }
+  }
+
+  if (!loaded) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, delay: 0.13, ease: EASE_OUT }}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h2 className="text-[15px] font-bold" style={{ color: "var(--text-primary)" }}>
+            ✨ Ready for you
+          </h2>
+          <p className="text-[12px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+            AI-generated posts based on your brand and upcoming occasions
+          </p>
+        </div>
+        <Link
+          href="/images"
+          className="text-xs font-semibold flex items-center gap-1 hover:underline"
+          style={{ color: "var(--primary, #1A7A4A)" }}
+        >
+          View all <ArrowRight size={12} />
+        </Link>
+      </div>
+
+      {posts.length === 0 ? (
+        <div
+          className="rounded-2xl px-5 py-4 text-center"
+          style={{ border: "1px dashed var(--border-color)", background: "var(--bg-card)" }}
+        >
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            Upload product photos in{" "}
+            <Link href="/images" className="underline font-medium" style={{ color: "var(--primary, #1A7A4A)" }}>
+              Image Studio
+            </Link>{" "}
+            to get started →
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {posts.map((post) => (
+            <motion.div
+              key={post.id}
+              layout
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.93 }}
+              transition={{ duration: 0.25, ease: EASE_OUT }}
+              className="rounded-2xl overflow-hidden"
+              style={{ background: "var(--bg-card)", border: "1px solid var(--border-color)", boxShadow: "var(--shadow-card)" }}
+            >
+              {/* Image */}
+              <div className="relative overflow-hidden bg-gray-100" style={{ height: 160 }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={post.imageUrl}
+                  alt="AI post"
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
+                {post.occasionName && (
+                  <div className="absolute top-2 left-2">
+                    <span className="text-[10px] font-bold text-white px-2 py-0.5 rounded-full shadow"
+                      style={{ background: "rgba(0,0,0,0.55)" }}>
+                      {post.occasionEmoji} {post.occasionName}
+                    </span>
+                  </div>
+                )}
+                <div className="absolute top-2 right-2">
+                  <span className="text-[10px] font-semibold text-amber-700 px-2 py-0.5 rounded-full"
+                    style={{ background: "rgba(245,158,11,0.15)" }}>
+                    <Clock size={9} className="inline mr-0.5" />
+                    Pending
+                  </span>
+                </div>
+              </div>
+
+              {/* Caption */}
+              <div className="px-3 py-2.5">
+                <p className="text-xs leading-relaxed line-clamp-2" style={{ color: "var(--text-secondary)" }}>
+                  {(post.caption ?? "").slice(0, 80) || <span style={{ color: "var(--text-muted)" }}>No caption yet</span>}
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="px-3 pb-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleApprove(post.id)}
+                  disabled={approvingId === post.id}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-[#1A7A4A] hover:bg-[#145C38] text-white text-xs font-semibold transition-all disabled:opacity-60"
+                >
+                  {approvingId === post.id
+                    ? <Loader2 size={11} className="animate-spin" />
+                    : <CheckCircle2 size={11} />
+                  }
+                  Approve
+                </button>
+                <Link
+                  href="/images"
+                  className="flex items-center justify-center gap-1 px-3 py-2 rounded-xl border text-xs font-medium transition-colors"
+                  style={{ borderColor: "var(--border-color)", color: "var(--text-muted)" }}
+                >
+                  View <ArrowRight size={11} />
+                </Link>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </motion.div>
   );
 }
 
@@ -632,7 +792,10 @@ export default function DashboardPage() {
             </div>
           </motion.div>
 
-          {/* ── Section 3b: Generate Product Posts ────────────────────────── */}
+          {/* ── Section 3b: Ready for You ──────────────────────────────── */}
+          <ReadyForYouSection />
+
+          {/* ── Section 3c: Generate Product Posts ────────────────────────── */}
           <BulkProductPostsSection />
 
           {/* ── Section 4: Recent Content ──────────────────────────────────── */}

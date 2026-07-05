@@ -64,6 +64,13 @@ enum SceneStatus {
   FAILED
 }
 
+enum PostStatus {
+  PENDING_APPROVAL
+  APPROVED
+  SCHEDULED
+  POSTED
+}
+
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 model User {
@@ -82,6 +89,7 @@ model User {
   productImages       ProductImage[]
   generatedContents   GeneratedContent[]
   generatedImages     GeneratedImage[]
+  generatedPosts      GeneratedPost[]
   videoProjects       VideoProject[]
   calendarEntries     CalendarEntry[]
   instagramConnection InstagramConnection?
@@ -118,6 +126,7 @@ model Brand {
   productImages     ProductImage[]
   generatedContents GeneratedContent[]
   generatedImages   GeneratedImage[]
+  generatedPosts    GeneratedPost[]
   videoProjects     VideoProject[]
   calendarEntries   CalendarEntry[]
 }
@@ -133,6 +142,7 @@ model ProductImage {
   user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   brand             Brand              @relation(fields: [brandId], references: [id], onDelete: Cascade)
   generatedContents GeneratedContent[]
+  generatedPosts    GeneratedPost[]
   postBriefs        PostBrief[]
 }
 
@@ -298,4 +308,30 @@ model InstagramConnection {
   connectedAt    DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model GeneratedPost {
+  id             String     @id @default(uuid())
+  brandId        String
+  userId         String
+  imageUrl       String
+  thumbnailUrl   String?
+  caption        String?
+  hashtags       String[]   @default([])
+  occasionName   String?
+  occasionEmoji  String?
+  productImageId String?
+  creativeData   Json?
+  status         PostStatus @default(PENDING_APPROVAL)
+  trigger        String     @default("manual")
+  scheduledAt    DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brand        Brand         @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  productImage ProductImage? @relation(fields: [productImageId], references: [id], onDelete: SetNull)
+
+  @@index([brandId])
+  @@index([userId])
 }
