@@ -105,8 +105,10 @@ model Brand {
   brandDna         String?
   logoColorPrimary   String?
   logoColorSecondary String?
-  instagramUrl       String?
-  websiteUrl         String?
+  instagramUrl         String?
+  websiteUrl           String?
+  googleBusinessUrl    String?
+  googleBusinessData   Json?
   strategyApproved Boolean  @default(false)
   strategyData     Json?
   createdAt        DateTime @default(now())

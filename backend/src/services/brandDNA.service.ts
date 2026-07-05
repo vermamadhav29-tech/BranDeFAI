@@ -26,6 +26,7 @@ export interface BrandDNAInput {
   industry?: string | null;
   brandVibe: string;
   url?: string;
+  googleBusinessUrl?: string;
 }
 
 export interface BrandDNA {
@@ -43,9 +44,35 @@ export interface BrandDNA {
 }
 
 // ─── URL brand analysis via GPT-4o web browsing ───────────────────────────────
-// Tries Responses API with web_search_preview first; falls back to URL-only
-// inference if the tool is unavailable. Always returns "" on any failure —
-// never blocks onboarding.
+
+export interface GoogleBusinessData {
+  businessName?: string;
+  address?: string;
+  phone?: string;
+  hours?: string;
+  rating?: string;
+  reviewCount?: string;
+  category?: string;
+  topReviews?: string[];
+}
+
+export function isGoogleBusinessUrl(url: string): boolean {
+  return (
+    /maps\.google\.(com|co\.in)/i.test(url) ||
+    /g\.page\//i.test(url) ||
+    /goo\.gl\/maps/i.test(url) ||
+    /google\.[a-z.]+\/maps/i.test(url)
+  );
+}
+
+const GOOGLE_BUSINESS_PROMPT =
+  `You are a local business data extractor. Visit this Google Business Profile URL and extract: ` +
+  `business name, full address, phone number, business hours (summarised), star rating, review count, ` +
+  `business category, and the 3 most helpful customer review snippets. ` +
+  `Return ONLY valid JSON matching this shape: ` +
+  `{ "businessName": string, "address": string, "phone": string, "hours": string, ` +
+  `"rating": string, "reviewCount": string, "category": string, "topReviews": [string, string, string] }. ` +
+  `Use empty string for any field you cannot find. Never add extra keys.`;
 
 const URL_ANALYST_PROMPT =
   `You are a brand analyst. Visit the URL provided and analyse the brand. ` +
@@ -59,6 +86,44 @@ const URL_FALLBACK_PROMPT =
   `Based on this URL alone (you cannot browse it), infer what you can about ` +
   `this brand from the URL structure, domain name, and any patterns you recognise. ` +
   `Return a 2-3 sentence inference. Make clear this is inferred, not confirmed.`;
+
+export async function extractGoogleBusinessData(url: string): Promise<GoogleBusinessData> {
+  const trimmed = url.trim();
+  if (!trimmed) return {};
+
+  try {
+    const response = await openai.responses.create(
+      {
+        model: "gpt-4o",
+        tools: [{ type: "web_search_preview" }],
+        instructions: GOOGLE_BUSINESS_PROMPT,
+        input: `Extract business data from: ${trimmed}`,
+        max_output_tokens: 600,
+      },
+      { signal: AbortSignal.timeout(30_000) }
+    );
+
+    type OutputItem = { type: string; content?: { type: string; text?: string }[] };
+    const text = (response.output as OutputItem[])
+      .filter((item) => item.type === "message")
+      .flatMap((item) => item.content ?? [])
+      .filter((c) => c.type === "output_text")
+      .map((c) => (c.text ?? "").trim())
+      .filter(Boolean)
+      .join(" ");
+
+    if (text) {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]) as GoogleBusinessData;
+      }
+    }
+  } catch {
+    // Never block onboarding
+  }
+
+  return {};
+}
 
 export async function analyseUrlForBrandContext(url: string): Promise<string> {
   const trimmed = url.trim();
@@ -110,8 +175,11 @@ export async function analyseUrlForBrandContext(url: string): Promise<string> {
 
 // ─── generateBrandDNA ─────────────────────────────────────────────────────────
 
-export async function generateBrandDNA(brandData: BrandDNAInput): Promise<BrandDNA> {
-  const { brandName, brandVibe, url } = brandData;
+export async function generateBrandDNA(
+  brandData: BrandDNAInput,
+  googleBusinessData?: GoogleBusinessData
+): Promise<BrandDNA> {
+  const { brandName, brandVibe, url, googleBusinessUrl } = brandData;
   const whatTheySell = brandData.whatTheySell || brandData.brandBrief || brandData.industry || "";
 
   const parts: string[] = [
@@ -120,7 +188,24 @@ export async function generateBrandDNA(brandData: BrandDNAInput): Promise<BrandD
     `Brand vibe: ${brandVibe}`,
   ];
 
-  if (url) {
+  // Include Google Business data in DNA if available
+  const gbData: GoogleBusinessData | undefined =
+    googleBusinessData ??
+    (googleBusinessUrl && isGoogleBusinessUrl(googleBusinessUrl)
+      ? await extractGoogleBusinessData(googleBusinessUrl).catch((): GoogleBusinessData => ({}))
+      : undefined);
+
+  if (gbData && Object.values(gbData).some(Boolean)) {
+    const gbParts: string[] = ["GOOGLE BUSINESS DATA:"];
+    if (gbData.address) gbParts.push(`Address: ${gbData.address}`);
+    if (gbData.phone) gbParts.push(`Phone: ${gbData.phone}`);
+    if (gbData.hours) gbParts.push(`Hours: ${gbData.hours}`);
+    if (gbData.rating) gbParts.push(`Rating: ${gbData.rating}${gbData.reviewCount ? ` (${gbData.reviewCount} reviews)` : ""}`);
+    if (gbData.topReviews?.length) gbParts.push(`Top reviews: ${gbData.topReviews.filter(Boolean).join(" | ")}`);
+    parts.push(gbParts.join("\n"));
+  }
+
+  if (url && !isGoogleBusinessUrl(url)) {
     const urlContext = await analyseUrlForBrandContext(url);
     if (urlContext) parts.push(urlContext);
   }
@@ -139,7 +224,7 @@ export async function getBrandContext(brandId: string, campaignBrief?: string): 
 
   const dna = JSON.parse(brand.brandDna) as BrandDNA;
 
-  return [
+  const lines = [
     `BRAND DNA:`,
     `Business: ${brand.brandName} | Sells: ${brand.whatTheySell || brand.brandBrief || brand.industry}`,
     `Personality: ${dna.brand_personality.join(", ")}`,
@@ -153,7 +238,23 @@ export async function getBrandContext(brandId: string, campaignBrief?: string): 
     `Tone DON'Ts: ${dna.tone_rules.donts.join(" | ")}`,
     `Hinglish style: ${dna.hinglish_style}`,
     `Sample caption: ${dna.sample_caption}`,
-    ``,
-    `TODAY'S BRIEF: ${campaignBrief || "General brand content"}`,
-  ].join("\n");
+  ];
+
+  if (brand.googleBusinessData) {
+    const gb = brand.googleBusinessData as GoogleBusinessData;
+    if (Object.values(gb).some(Boolean)) {
+      lines.push(``);
+      lines.push(`GOOGLE BUSINESS DATA:`);
+      if (gb.address) lines.push(`Address: ${gb.address}`);
+      if (gb.phone) lines.push(`Phone: ${gb.phone}`);
+      if (gb.hours) lines.push(`Hours: ${gb.hours}`);
+      if (gb.rating) lines.push(`Rating: ${gb.rating}${gb.reviewCount ? ` (${gb.reviewCount} reviews)` : ""}`);
+      if (gb.topReviews?.length) lines.push(`Top reviews: ${gb.topReviews.filter(Boolean).join(" | ")}`);
+    }
+  }
+
+  lines.push(``);
+  lines.push(`TODAY'S BRIEF: ${campaignBrief || "General brand content"}`);
+
+  return lines.join("\n");
 }

@@ -4,7 +4,7 @@ import { sendSuccess } from "../utils/response";
 import { createError } from "../middleware/errorHandler";
 import { AuthRequest } from "../middleware/auth";
 import { generateText } from "../services/ai/openaiService";
-import { generateBrandDNA } from "../services/brandDNA.service";
+import { generateBrandDNA, extractGoogleBusinessData, isGoogleBusinessUrl } from "../services/brandDNA.service";
 import { extractBrandColorFromLogo } from "../services/promoCreative.service";
 import type { BrandInput, LogoUrlInput, GenerateFieldInput } from "../middleware/validators/brandSchemas";
 
@@ -42,7 +42,7 @@ export async function createBrand(req: AuthRequest, res: Response, next: NextFun
       return next(createError("Brand already exists for this account", 409));
     }
 
-    const { brandName, industry, targetAudience, tone, platforms, brandBrief, whatTheySell, city, logoUrl, instagramUrl, websiteUrl } = req.body as BrandInput;
+    const { brandName, industry, targetAudience, tone, platforms, brandBrief, whatTheySell, city, logoUrl, instagramUrl, websiteUrl, googleBusinessUrl } = req.body as BrandInput;
 
     const brand = await prisma.brand.create({
       data: {
@@ -58,6 +58,7 @@ export async function createBrand(req: AuthRequest, res: Response, next: NextFun
         logoUrl: logoUrl ?? null,
         instagramUrl: instagramUrl ?? null,
         websiteUrl: websiteUrl ?? null,
+        googleBusinessUrl: googleBusinessUrl ?? null,
       },
     });
 
@@ -68,18 +69,32 @@ export async function createBrand(req: AuthRequest, res: Response, next: NextFun
       )
       .catch(() => {});
 
-    // Fire-and-forget — analyse brand URL (if provided) then generate Brand DNA.
-    // analyseUrlForBrandContext has its own timeout and never throws, so this
-    // never blocks onboarding. instagramUrl is preferred over websiteUrl.
+    // Fire-and-forget — extract Google Business data (if provided), then generate Brand DNA.
     (async () => {
-      const dna = await generateBrandDNA({
-        brandName: brand.brandName,
-        whatTheySell: brand.whatTheySell,
-        brandBrief: brand.brandBrief,
-        industry: brand.industry,
-        brandVibe: brand.tone,
-        url: instagramUrl ?? websiteUrl ?? undefined,
-      });
+      let googleBusinessData;
+      if (googleBusinessUrl && isGoogleBusinessUrl(googleBusinessUrl)) {
+        googleBusinessData = await extractGoogleBusinessData(googleBusinessUrl).catch(() => ({}));
+        if (googleBusinessData && Object.values(googleBusinessData).some(Boolean)) {
+          await prisma.brand.update({
+            where: { id: brand.id },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            data: { googleBusinessData: JSON.parse(JSON.stringify(googleBusinessData)) as any },
+          }).catch(() => {});
+        }
+      }
+
+      const dna = await generateBrandDNA(
+        {
+          brandName: brand.brandName,
+          whatTheySell: brand.whatTheySell,
+          brandBrief: brand.brandBrief,
+          industry: brand.industry,
+          brandVibe: brand.tone,
+          url: instagramUrl ?? websiteUrl ?? undefined,
+          googleBusinessUrl: googleBusinessUrl ?? undefined,
+        },
+        googleBusinessData
+      );
       await prisma.brand.update({
         where: { id: brand.id },
         data: { brandDna: JSON.stringify(dna), brandVibe: brand.tone },
