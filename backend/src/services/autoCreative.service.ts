@@ -1,4 +1,3 @@
-import Replicate from "replicate";
 import { v2 as cloudinary } from "cloudinary";
 import sharp from "sharp";
 import type { OverlayOptions } from "sharp";
@@ -8,7 +7,6 @@ import { getBrandContext } from "./brandDNA.service";
 import { generateCaptionSet, pickBestCaption } from "./contentService";
 import { generateFluxBackground } from "./fluxImage.service";
 import { extractDominantColors } from "./promoCreative.service";
-import type { BrandDNA } from "./brandDNA.service";
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -263,7 +261,7 @@ function buildGradientSvg(placement: CreativeBrief["product_placement"]): Buffer
 function buildTextOverlaySvg(
   brief: CreativeBrief,
   primaryColor: string,
-  secondaryColor: string,
+  _secondaryColor: string,
   logoDataUri: string | null
 ): Buffer {
   const { placement } = { placement: brief.product_placement };
@@ -299,7 +297,6 @@ function buildTextOverlaySvg(
   const CTA_Y = BAR_Y + (BAR_H - CTA_H) / 2;
 
   // Occasion badge (top-right)
-  const BADGE_OCC_X = isRightProduct ? 30 : 0;
   const BADGE_OCC_W = 220;
 
   const elements: string[] = [];
@@ -311,7 +308,7 @@ function buildTextOverlaySvg(
     elements.push(`
       <rect x="${occX}" y="30" width="${BADGE_OCC_W}" height="44" rx="22" ry="22" fill="${primaryColor}" opacity="0.92"/>
       <text x="${occX + BADGE_OCC_W / 2}" y="58" text-anchor="middle" dominant-baseline="central"
-        font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="white">${occ}</text>
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="14" font-weight="bold" fill="white">${occ}</text>
     `);
   }
 
@@ -331,14 +328,14 @@ function buildTextOverlaySvg(
   if (headLine1) {
     elements.push(`
       <text x="${textX}" y="${HL_Y1}"
-        font-family="Arial, 'Liberation Sans', sans-serif" font-size="64" font-weight="bold"
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="64" font-weight="bold"
         fill="white" dominant-baseline="auto">${escapeXml(headLine1)}</text>
     `);
   }
   if (headLine2) {
     elements.push(`
       <text x="${textX}" y="${HL_Y2}"
-        font-family="Arial, 'Liberation Sans', sans-serif" font-size="64" font-weight="bold"
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="64" font-weight="bold"
         fill="${primaryColor}" dominant-baseline="auto">${escapeXml(headLine2)}</text>
     `);
   }
@@ -347,7 +344,7 @@ function buildTextOverlaySvg(
   if (brief.subheadline) {
     elements.push(`
       <text x="${textX}" y="${SUB_Y}"
-        font-family="Arial, 'Liberation Sans', sans-serif" font-size="22"
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="22"
         fill="rgba(255,255,255,0.82)" dominant-baseline="auto">${escapeXml(brief.subheadline)}</text>
     `);
   }
@@ -364,7 +361,7 @@ function buildTextOverlaySvg(
         fill="rgba(255,255,255,0.14)" stroke="rgba(255,255,255,0.28)" stroke-width="1"/>
       <text x="${badgeCurX + approxW / 2}" y="${BADGE_Y + BADGE_H / 2 + 1}"
         text-anchor="middle" dominant-baseline="central"
-        font-family="Arial, sans-serif" font-size="${BADGE_FONT}" fill="white">${text}</text>
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="${BADGE_FONT}" fill="white">${text}</text>
     `);
     badgeCurX += approxW + BADGE_GAP;
   });
@@ -377,7 +374,7 @@ function buildTextOverlaySvg(
   if (brief.tagline) {
     elements.push(`
       <text x="30" y="${BAR_Y + BAR_H / 2 + 1}" dominant-baseline="central"
-        font-family="Arial, sans-serif" font-size="14" fill="rgba(255,255,255,0.82)">${escapeXml(brief.tagline)}</text>
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="14" fill="rgba(255,255,255,0.82)">${escapeXml(brief.tagline)}</text>
     `);
   }
   // CTA button
@@ -385,7 +382,7 @@ function buildTextOverlaySvg(
     elements.push(`
       <rect x="${CTA_X}" y="${CTA_Y}" width="${CTA_W}" height="${CTA_H}" rx="${CTA_H / 2}" ry="${CTA_H / 2}" fill="white"/>
       <text x="${CTA_X + CTA_W / 2}" y="${CTA_Y + CTA_H / 2 + 1}" text-anchor="middle" dominant-baseline="central"
-        font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="${primaryColor}">${escapeXml(brief.cta)}</text>
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="14" font-weight="bold" fill="${primaryColor}">${escapeXml(brief.cta)}</text>
     `);
   }
 
@@ -615,7 +612,6 @@ export async function generateAutoCreative(
     console.log(`[autoCreative] Uploaded | ${imageUrl}`);
 
     // ── Step 6: Generate caption ──
-    const dna = JSON.parse(brand.brandDna) as BrandDNA;
     const brandDnaBlock = brandContext;
     const campaignBrief = occasion
       ? `${occasion.name} promotional post for ${brand.brandName}. ${occasion.hook}. Product: ${brand.whatTheySell ?? brand.industry}.`

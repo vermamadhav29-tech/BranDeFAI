@@ -1,0 +1,8 @@
+[phases.setup]
+# Install fonts so librsvg (used by Sharp for SVG rendering) can find them
+aptPkgs = [
+  "fonts-liberation",
+  "fonts-dejavu-core",
+  "fontconfig",
+  "libfontconfig1",
+]
