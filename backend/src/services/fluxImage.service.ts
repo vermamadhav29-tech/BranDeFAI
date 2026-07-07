@@ -180,10 +180,9 @@ async function uploadRemoteImageToCloudinary(imageUrl: string): Promise<string> 
 // Generates a background scene via Flux 2 Pro and returns the raw image buffer.
 // No DB row, no credit deduction — caller handles those.
 
-export async function generateFluxBackground(scenePrompt: string): Promise<Buffer> {
-  const negativePrompt =
-    "text, letters, words, logos, watermarks, cartoonish, CGI, 3D render, distorted";
-  const { pollingUrl } = await submitFluxJob(scenePrompt, negativePrompt);
+export async function generateFluxBackground(scenePrompt: string, negativePrompt?: string): Promise<Buffer> {
+  const neg = negativePrompt ?? "text, letters, words, logos, watermarks, cartoonish, CGI, 3D render, distorted";
+  const { pollingUrl } = await submitFluxJob(scenePrompt, neg);
   const fluxUrl = await pollFluxResult(pollingUrl);
   const res = await fetch(fluxUrl);
   if (!res.ok) throw new Error(`Failed to download Flux image (${res.status})`);

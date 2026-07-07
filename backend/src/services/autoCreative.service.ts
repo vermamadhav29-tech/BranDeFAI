@@ -2,11 +2,10 @@ import { v2 as cloudinary } from "cloudinary";
 import sharp from "sharp";
 import type { OverlayOptions } from "sharp";
 import prisma from "../utils/prisma";
-import { generateText } from "./ai/openaiService";
 import { getBrandContext } from "./brandDNA.service";
 import { generateCaptionSet, pickBestCaption } from "./contentService";
 import { generateFluxBackground } from "./fluxImage.service";
-import { extractDominantColors } from "./promoCreative.service";
+import { generateCreativeBrief, CreativeBrief } from "./creativeBrief.service";
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -16,8 +15,6 @@ cloudinary.config({
 
 const CANVAS_W = 1080;
 const CANVAS_H = 1350;
-const DEFAULT_PRIMARY = "#1A7A4A";
-const DEFAULT_SECONDARY = "#1A2E44";
 
 // ─── Indian Occasions Calendar 2026 ──────────────────────────────────────────
 
@@ -143,62 +140,6 @@ export function getUpcomingOccasions(withinDays = 14): OccasionContext[] {
   }));
 }
 
-// ─── Creative Brief ───────────────────────────────────────────────────────────
-
-interface CreativeBrief {
-  headline: string;
-  subheadline: string;
-  cta: string;
-  background_scene: string;
-  background_mood: string;
-  product_placement: "left" | "right" | "center" | "bottom-right";
-  layout: "product-hero" | "lifestyle-blend" | "minimal-product";
-  feature_badges: string[];
-  tagline: string;
-  occasion_badge: string | null;
-}
-
-const CREATIVE_BRIEF_SYSTEM = `You are a creative director for Indian brands. Based on the brand DNA and occasion context, create a complete creative brief for a promotional Instagram post. The post must feature the actual product photo — do not replace or reimagine the product.
-
-Return ONLY valid JSON matching this exact shape:
-{
-  "headline": "punchy max 4 words, can be Hinglish",
-  "subheadline": "supporting line max 8 words",
-  "cta": "call to action max 3 words e.g. Shop Now",
-  "background_scene": "detailed description of AI-generated background scene to composite behind the product — emotional, occasion-appropriate, photorealistic cinematic",
-  "background_mood": "color palette and lighting description e.g. warm golden tones, bokeh lights, dark elegant background",
-  "product_placement": "right",
-  "layout": "product-hero",
-  "feature_badges": ["Premium Quality", "Handcrafted", "Fast Delivery"],
-  "tagline": "brand tagline for bottom bar",
-  "occasion_badge": "Happy Diwali 🪔 or null if no occasion"
-}`;
-
-async function generateCreativeBrief(
-  brandContext: string,
-  industryLabel: string,
-  whatTheySell: string,
-  occasion: OccasionContext | null
-): Promise<CreativeBrief> {
-  const user = [
-    `BRAND CONTEXT:\n${brandContext}`,
-    ``,
-    `OCCASION: ${occasion ? `${occasion.name} ${occasion.emoji} (in ${occasion.days_away} days)` : "None — general brand post"}`,
-    occasion ? `OCCASION THEMES: ${occasion.themes}` : "",
-    occasion ? `OCCASION HOOK: ${occasion.hook}` : "",
-    ``,
-    `PRODUCT/SERVICE: ${whatTheySell || industryLabel}`,
-    `INDUSTRY: ${industryLabel}`,
-    ``,
-    `Create a creative brief for a promotional Instagram post (1080x1350 portrait).`,
-  ]
-    .filter((l) => l !== null)
-    .join("\n");
-
-  const result = await generateText(CREATIVE_BRIEF_SYSTEM, user, true, 600);
-  return result as CreativeBrief;
-}
-
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 async function fetchBuffer(url: string): Promise<Buffer> {
@@ -224,29 +165,65 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-// ─── Gradient overlay SVG ────────────────────────────────────────────────────
+// ─── White background removal ─────────────────────────────────────────────────
+// Walks every pixel; sets alpha to 0 for near-white (all channels > threshold).
+// Only called when sharp().stats() confirms the image is predominantly white.
 
-function buildGradientSvg(placement: CreativeBrief["product_placement"]): Buffer {
+async function removeWhiteBackground(imageBuffer: Buffer, threshold = 230): Promise<Buffer> {
+  const { data, info } = await sharp(imageBuffer)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const pixels = Buffer.from(data);
+  for (let i = 0; i < pixels.length; i += 4) {
+    if (pixels[i] > threshold && pixels[i + 1] > threshold && pixels[i + 2] > threshold) {
+      pixels[i + 3] = 0;
+    }
+  }
+
+  return sharp(pixels, {
+    raw: { width: info.width, height: info.height, channels: 4 },
+  })
+    .png()
+    .toBuffer();
+}
+
+// ─── Gradient overlay SVG ────────────────────────────────────────────────────
+// Opacity 0.55 — visible enough for text legibility, not so heavy it hides background.
+
+function buildGradientSvg(
+  layoutStyle: CreativeBrief["layout_style"],
+  placement: CreativeBrief["product_placement"]
+): Buffer {
   let gradientDef: string;
 
-  if (placement === "right") {
+  if (layoutStyle === "split" && placement === "right") {
+    // Product on right → dark gradient from left 60% of canvas
     gradientDef = `<linearGradient id="grad" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="black" stop-opacity="0.72"/>
-      <stop offset="55%" stop-color="black" stop-opacity="0.35"/>
+      <stop offset="0%"   stop-color="black" stop-opacity="0.72"/>
+      <stop offset="60%"  stop-color="black" stop-opacity="0.35"/>
       <stop offset="100%" stop-color="black" stop-opacity="0"/>
     </linearGradient>`;
-  } else if (placement === "left") {
+  } else if (layoutStyle === "split" && placement === "left") {
+    // Product on left → dark gradient from right 60% of canvas
     gradientDef = `<linearGradient id="grad" x1="1" y1="0" x2="0" y2="0">
-      <stop offset="0%" stop-color="black" stop-opacity="0.72"/>
-      <stop offset="55%" stop-color="black" stop-opacity="0.35"/>
+      <stop offset="0%"   stop-color="black" stop-opacity="0.72"/>
+      <stop offset="60%"  stop-color="black" stop-opacity="0.35"/>
       <stop offset="100%" stop-color="black" stop-opacity="0"/>
     </linearGradient>`;
-  } else {
-    // center / bottom-right: radial vignette
+  } else if (layoutStyle === "overlay") {
+    // Radial vignette around all edges
     gradientDef = `<radialGradient id="grad" cx="50%" cy="50%" r="70%">
-      <stop offset="0%" stop-color="black" stop-opacity="0"/>
+      <stop offset="0%"   stop-color="black" stop-opacity="0"/>
       <stop offset="100%" stop-color="black" stop-opacity="0.55"/>
     </radialGradient>`;
+  } else {
+    // minimal / full-bleed: light overlay on bottom 30% only
+    gradientDef = `<linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="70%"  stop-color="black" stop-opacity="0"/>
+      <stop offset="100%" stop-color="black" stop-opacity="0.40"/>
+    </linearGradient>`;
   }
 
   const svg = `<svg width="${CANVAS_W}" height="${CANVAS_H}" xmlns="http://www.w3.org/2000/svg">
@@ -258,131 +235,143 @@ function buildGradientSvg(placement: CreativeBrief["product_placement"]): Buffer
 
 // ─── Text + UI overlay SVG ────────────────────────────────────────────────────
 
-function buildTextOverlaySvg(
-  brief: CreativeBrief,
-  primaryColor: string,
-  _secondaryColor: string,
-  logoDataUri: string | null
-): Buffer {
-  const { placement } = { placement: brief.product_placement };
-  const isRightProduct = placement === "right";
-  const textX = isRightProduct ? 48 : CANVAS_W / 2 + 48;
-  const textMaxW = CANVAS_W / 2 - 80;
+function buildTextOverlaySvg(brief: CreativeBrief, logoDataUri: string | null): Buffer {
+  const placement = brief.product_placement;
+  const primary = brief.primary_color;
+  const accent = brief.accent_color;
 
-  // Split headline into max 2 lines (first word / rest)
-  const words = brief.headline.trim().split(/\s+/);
-  const headLine1 = words[0] ?? "";
-  const headLine2 = words.slice(1).join(" ");
+  // Text column: left half for product-right layouts, right half for product-left
+  const isProductRight = placement === "right";
+  const isProductLeft = placement === "left";
+  const textX = isProductLeft ? Math.round(CANVAS_W / 2) + 40 : 40;
+  const textMaxW = Math.round(CANVAS_W / 2) - 80;
 
-  // Headline Y positions
-  const HL_Y1 = Math.round(CANVAS_H * 0.35);
-  const HL_Y2 = HL_Y1 + 76;
-  const SUB_Y = HL_Y2 + (headLine2 ? 72 : 20);
+  // Headline Y positions (spec: y=380, line height 80px)
+  const HL_Y1 = 380;
+  const HL_Y2 = HL_Y1 + 80;
+  const SUB_Y = 560;
 
   // Feature badges
-  const badges = (brief.feature_badges ?? []).slice(0, 4);
-  const BADGE_Y = Math.round(CANVAS_H * 0.62);
-  const BADGE_H = 30;
-  const BADGE_R = 15;
-  const BADGE_GAP = 10;
+  const badges = (brief.feature_badges ?? []).slice(0, 3);
+  const BADGE_Y = 650;
+  const BADGE_H = 32;
+  const BADGE_R = 14;
+  const BADGE_GAP = 12;
   const BADGE_PX = 14;
-  const BADGE_FONT = 12;
+  const BADGE_FONT = 13;
 
-  // Bottom bar
-  const BAR_Y = CANVAS_H - 90;
+  // Bottom bar (spec: y=1260, height=90)
+  const BAR_Y = 1260;
   const BAR_H = 90;
-  const CTA_W = 160;
+  const CTA_W = 200;
   const CTA_H = 52;
-  const CTA_X = CANVAS_W - CTA_W - 30;
-  const CTA_Y = BAR_Y + (BAR_H - CTA_H) / 2;
+  const CTA_X = 830;
+  const CTA_Y = BAR_Y + (BAR_H - CTA_H) / 2; // vertically centered in bar
 
-  // Occasion badge (top-right)
+  // Occasion badge (top-right, spec: x=820, y=40)
   const BADGE_OCC_W = 220;
+  const BADGE_OCC_H = 44;
+  const BADGE_OCC_X = isProductRight ? CANVAS_W - BADGE_OCC_W - 30 : 30;
+
+  // Logo (top of text column)
+  const LOGO_W = 216; // 20% of 1080
+  const LOGO_H = 80;
+  const logoX = isProductLeft ? CANVAS_W - LOGO_W - 30 : 30;
 
   const elements: string[] = [];
 
-  // Occasion badge
+  // ── Occasion badge (top-right) ──
   if (brief.occasion_badge) {
     const occ = escapeXml(brief.occasion_badge);
-    const occX = isRightProduct ? CANVAS_W - BADGE_OCC_W - 30 : 30;
     elements.push(`
-      <rect x="${occX}" y="30" width="${BADGE_OCC_W}" height="44" rx="22" ry="22" fill="${primaryColor}" opacity="0.92"/>
-      <text x="${occX + BADGE_OCC_W / 2}" y="58" text-anchor="middle" dominant-baseline="central"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="14" font-weight="bold" fill="white">${occ}</text>
+      <rect x="${BADGE_OCC_X}" y="40" width="${BADGE_OCC_W}" height="${BADGE_OCC_H}" rx="22" ry="22"
+        fill="${primary}" opacity="0.92"/>
+      <text x="${BADGE_OCC_X + BADGE_OCC_W / 2}" y="${40 + BADGE_OCC_H / 2 + 1}"
+        text-anchor="middle" dominant-baseline="central"
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
+        font-size="14" font-weight="bold" fill="white">${occ}</text>
     `);
   }
 
-  // Brand logo (top-left or top-right depending on text side)
-  const LOGO_W = 180;
-  const LOGO_H = 80;
-  const logoX = isRightProduct ? 30 : CANVAS_W - LOGO_W - 30;
-  const logoY = 36;
+  // ── Brand logo (top of text column) ──
   if (logoDataUri) {
     elements.push(`
-      <image href="${logoDataUri}" x="${logoX}" y="${logoY}" width="${LOGO_W}" height="${LOGO_H}"
+      <image href="${logoDataUri}" x="${logoX}" y="50" width="${LOGO_W}" height="${LOGO_H}"
         preserveAspectRatio="xMinYMid meet" opacity="0.95"/>
     `);
   }
 
-  // Headline
-  if (headLine1) {
+  // ── Headline line 1: brief.headline (white) ──
+  if (brief.headline) {
     elements.push(`
       <text x="${textX}" y="${HL_Y1}"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="64" font-weight="bold"
-        fill="white" dominant-baseline="auto">${escapeXml(headLine1)}</text>
-    `);
-  }
-  if (headLine2) {
-    elements.push(`
-      <text x="${textX}" y="${HL_Y2}"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="64" font-weight="bold"
-        fill="${primaryColor}" dominant-baseline="auto">${escapeXml(headLine2)}</text>
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
+        font-size="68" font-weight="bold" fill="white" dominant-baseline="auto">${escapeXml(brief.headline)}</text>
     `);
   }
 
-  // Subheadline
+  // ── Headline line 2: brief.headline_accent (accent color) ──
+  if (brief.headline_accent) {
+    elements.push(`
+      <text x="${textX}" y="${HL_Y2}"
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
+        font-size="68" font-weight="bold" fill="${accent}" dominant-baseline="auto">${escapeXml(brief.headline_accent)}</text>
+    `);
+  }
+
+  // ── Subheadline ──
   if (brief.subheadline) {
     elements.push(`
       <text x="${textX}" y="${SUB_Y}"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="22"
-        fill="rgba(255,255,255,0.82)" dominant-baseline="auto">${escapeXml(brief.subheadline)}</text>
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
+        font-size="22" fill="rgba(255,255,255,0.85)" dominant-baseline="auto">${escapeXml(brief.subheadline)}</text>
     `);
   }
 
-  // Feature badges
+  // ── Divider line ──
+  elements.push(`
+    <rect x="${textX}" y="600" width="160" height="2" fill="${accent}"/>
+  `);
+
+  // ── Feature badges (horizontal row, y=650) ──
   let badgeCurX = textX;
-  const badgeElems: string[] = [];
   badges.forEach((badge) => {
     const text = escapeXml(badge);
-    const approxW = Math.max(80, text.length * BADGE_FONT * 0.54 + BADGE_PX * 2);
-    if (badgeCurX + approxW > textX + textMaxW) return; // skip if overflow
-    badgeElems.push(`
+    const approxW = Math.max(80, text.length * BADGE_FONT * 0.54 + BADGE_PX * 2 + 18);
+    if (badgeCurX + approxW > textX + textMaxW) return;
+    elements.push(`
       <rect x="${badgeCurX}" y="${BADGE_Y}" width="${approxW}" height="${BADGE_H}" rx="${BADGE_R}" ry="${BADGE_R}"
-        fill="rgba(255,255,255,0.14)" stroke="rgba(255,255,255,0.28)" stroke-width="1"/>
-      <text x="${badgeCurX + approxW / 2}" y="${BADGE_Y + BADGE_H / 2 + 1}"
-        text-anchor="middle" dominant-baseline="central"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="${BADGE_FONT}" fill="white">${text}</text>
+        fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.30)" stroke-width="1"/>
+      <circle cx="${badgeCurX + 14}" cy="${BADGE_Y + BADGE_H / 2}" r="4" fill="${accent}"/>
+      <text x="${badgeCurX + 26}" y="${BADGE_Y + BADGE_H / 2 + 1}"
+        dominant-baseline="central"
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
+        font-size="${BADGE_FONT}" fill="rgba(255,255,255,0.90)">${text}</text>
     `);
     badgeCurX += approxW + BADGE_GAP;
   });
-  elements.push(...badgeElems);
 
-  // Bottom bar
+  // ── Bottom bar ──
   elements.push(`
-    <rect x="0" y="${BAR_Y}" width="${CANVAS_W}" height="${BAR_H}" fill="${hexToRgba(primaryColor, 0.88)}"/>
+    <rect x="0" y="${BAR_Y}" width="${CANVAS_W}" height="${BAR_H}" fill="${hexToRgba(primary, 0.90)}"/>
   `);
+
   if (brief.tagline) {
     elements.push(`
       <text x="30" y="${BAR_Y + BAR_H / 2 + 1}" dominant-baseline="central"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="14" fill="rgba(255,255,255,0.82)">${escapeXml(brief.tagline)}</text>
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
+        font-size="14" fill="rgba(255,255,255,0.82)">${escapeXml(brief.tagline)}</text>
     `);
   }
-  // CTA button
+
+  // ── CTA button ──
   if (brief.cta) {
     elements.push(`
-      <rect x="${CTA_X}" y="${CTA_Y}" width="${CTA_W}" height="${CTA_H}" rx="${CTA_H / 2}" ry="${CTA_H / 2}" fill="white"/>
-      <text x="${CTA_X + CTA_W / 2}" y="${CTA_Y + CTA_H / 2 + 1}" text-anchor="middle" dominant-baseline="central"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif" font-size="14" font-weight="bold" fill="${primaryColor}">${escapeXml(brief.cta)}</text>
+      <rect x="${CTA_X}" y="${CTA_Y}" width="${CTA_W}" height="${CTA_H}" rx="22" ry="22" fill="white"/>
+      <text x="${CTA_X + CTA_W / 2}" y="${CTA_Y + CTA_H / 2 + 1}"
+        text-anchor="middle" dominant-baseline="central"
+        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
+        font-size="15" font-weight="bold" fill="${primary}">${escapeXml(brief.cta)}</text>
     `);
   }
 
@@ -400,60 +389,72 @@ async function compositeCreativeImage(opts: {
   productBuffer: Buffer;
   logoDataUri: string | null;
   brief: CreativeBrief;
-  primaryColor: string;
-  secondaryColor: string;
 }): Promise<Buffer> {
-  const { backgroundBuffer, productBuffer, logoDataUri, brief, primaryColor, secondaryColor } = opts;
+  const { backgroundBuffer, productBuffer, logoDataUri, brief } = opts;
 
-  // ── Resize background to exact canvas size ──
+  // ── Resize background to exact canvas ──
   const bg = await sharp(backgroundBuffer)
     .resize(CANVAS_W, CANVAS_H, { fit: "cover", position: "center" })
     .toBuffer();
 
-  // ── Resize product: 45% canvas width, preserve aspect ratio ──
-  const PRODUCT_TARGET_W = Math.round(CANVAS_W * 0.45);
-  const productResized = await sharp(productBuffer)
+  // ── Product width by brief.product_size ──
+  const sizeMap: Record<CreativeBrief["product_size"], number> = {
+    large: Math.round(CANVAS_W * 0.55),
+    medium: Math.round(CANVAS_W * 0.42),
+    small: Math.round(CANVAS_W * 0.30),
+  };
+  const PRODUCT_TARGET_W = sizeMap[brief.product_size] ?? Math.round(CANVAS_W * 0.42);
+
+  // ── White background detection + removal ──
+  const stats = await sharp(productBuffer).stats();
+  const rMean = stats.channels[0].mean;
+  const gMean = stats.channels[1].mean;
+  const bMean = stats.channels[2].mean;
+  const hasWhiteBg = rMean > 230 && gMean > 230 && bMean > 230;
+
+  const cleanProduct = hasWhiteBg ? await removeWhiteBackground(productBuffer) : productBuffer;
+
+  // ── Resize product, preserve aspect ratio ──
+  const productResized = await sharp(cleanProduct)
     .resize({ width: PRODUCT_TARGET_W })
     .toBuffer();
   const productMeta = await sharp(productResized).metadata();
   const productW = productMeta.width ?? PRODUCT_TARGET_W;
   const productH = productMeta.height ?? PRODUCT_TARGET_W;
 
-  // ── Product placement coordinates ──
+  // ── Product placement coordinates (spec) ──
   const placement = brief.product_placement;
   let productLeft: number;
   let productTop: number;
-  const VERT_PAD = 40;
-  const centeredTop = Math.round((CANVAS_H - productH) / 2) + VERT_PAD;
 
   if (placement === "right") {
-    productLeft = Math.round(CANVAS_W * 0.52);
-    productTop = centeredTop;
+    productLeft = Math.round(CANVAS_W * 0.50);
+    productTop = Math.round(CANVAS_H * 0.18);
   } else if (placement === "left") {
     productLeft = Math.round(CANVAS_W * 0.03);
-    productTop = centeredTop;
-  } else if (placement === "bottom-right") {
-    productLeft = Math.round(CANVAS_W * 0.5);
-    productTop = Math.round(CANVAS_H * 0.35);
+    productTop = Math.round(CANVAS_H * 0.25);
+  } else if (placement === "bottom-center") {
+    productLeft = Math.round((CANVAS_W - productW) / 2);
+    productTop = Math.round(CANVAS_H * 0.50);
   } else {
     // center
     productLeft = Math.round((CANVAS_W - productW) / 2);
-    productTop = centeredTop;
+    productTop = Math.round(CANVAS_H * 0.30);
   }
 
-  // Keep product within canvas bounds
+  // Clamp to canvas — leave room for bottom bar (90px)
   productLeft = Math.max(0, Math.min(productLeft, CANVAS_W - productW));
   productTop = Math.max(0, Math.min(productTop, CANVAS_H - productH - 90));
 
-  // ── Drop shadow for product ──
-  const shadowPad = 20;
-  const shadowBlur = 20;
+  // ── Drop shadow (blur 25px, opacity 35%) ──
+  const shadowPad = 25;
   const canvasWS = productW + shadowPad * 2;
   const canvasHS = productH + shadowPad * 2;
+
   const shadowLayer = await sharp(productResized)
     .ensureAlpha()
     .tint({ r: 0, g: 0, b: 0 })
-    .blur(shadowBlur)
+    .blur(25)
     .toBuffer();
 
   const productWithShadow = await sharp({
@@ -466,22 +467,15 @@ async function compositeCreativeImage(opts: {
     .png()
     .toBuffer();
 
-  // ── Build compositing layers ──
+  // ── Composite: background → gradient → product → SVG text ──
   const composites: OverlayOptions[] = [
-    // Gradient overlay
-    { input: buildGradientSvg(placement), left: 0, top: 0 },
-    // Product with shadow
+    { input: buildGradientSvg(brief.layout_style, placement), left: 0, top: 0 },
     {
       input: productWithShadow,
       left: Math.max(0, productLeft - shadowPad),
       top: Math.max(0, productTop - shadowPad),
     },
-    // Text + UI overlay
-    {
-      input: buildTextOverlaySvg(brief, primaryColor, secondaryColor, logoDataUri),
-      left: 0,
-      top: 0,
-    },
+    { input: buildTextOverlaySvg(brief, logoDataUri), left: 0, top: 0 },
   ];
 
   return sharp(bg)
@@ -495,7 +489,7 @@ async function compositeCreativeImage(opts: {
 async function uploadToCloudinary(buffer: Buffer, brandId: string): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
-      { folder: `brandefai/auto-creative/${brandId}`, resource_type: "image" },
+      { folder: `brandefai/product-posts/${brandId}`, resource_type: "image" },
       (err, result) => {
         if (err) return reject(new Error(`Cloudinary: ${err.message}`));
         if (!result) return reject(new Error("Cloudinary returned no result"));
@@ -507,7 +501,6 @@ async function uploadToCloudinary(buffer: Buffer, brandId: string): Promise<stri
 }
 
 // ─── generateAutoCreative ─────────────────────────────────────────────────────
-// Main entry point. Returns null if brand has no product images (nothing to do).
 
 export async function generateAutoCreative(
   brandId: string,
@@ -519,7 +512,7 @@ export async function generateAutoCreative(
   console.log(`[autoCreative] START brand=${brandId} trigger=${trigger}`);
 
   try {
-    // ── Step 1: Gather context ──
+    // ── Step 1: Gather brand + product ──
     const brand = await prisma.brand.findUnique({ where: { id: brandId } });
     if (!brand || brand.userId !== userId) {
       console.log(`[autoCreative] Brand not found or unauthorized`);
@@ -542,82 +535,62 @@ export async function generateAutoCreative(
       return null;
     }
 
-    const brandContext = await getBrandContext(brandId).catch(() => "");
-
     // ── Step 2: Detect occasion ──
     const occasions = getUpcomingOccasions(14);
     const occasion = occasions[0] ?? null;
 
     // ── Step 3: Generate creative brief ──
-    const brief = await generateCreativeBrief(
-      brandContext,
-      brand.industry,
-      brand.whatTheySell ?? brand.brandBrief ?? brand.industry,
-      occasion
+    const brief = await generateCreativeBrief({
+      brandId,
+      productImageUrl: productImage.imageUrl,
+      productDescription: brand.whatTheySell ?? brand.brandBrief ?? brand.industry,
+      ideaTitle: occasion
+        ? `${occasion.name} promotional post`
+        : `${brand.brandName} brand awareness post`,
+      ideaType: occasion ? "seasonal" : "promotional",
+      occasionName: occasion?.name,
+    });
+    console.log(
+      `[autoCreative] Brief | headline="${brief.headline}" layout=${brief.layout_style} placement=${brief.product_placement}`
     );
-    console.log(`[autoCreative] Brief generated | headline="${brief.headline}"`);
 
-    // ── Step 4: Generate background via Flux 2 Pro ──
-    const fluxPrompt = [
-      brief.background_scene,
-      brief.background_mood,
-      "professional commercial photography, cinematic lighting, photorealistic, high resolution",
-      "shot on Sony A7R V, 85mm f/1.4, shallow depth of field",
-      "no text, no logos, no watermarks, no people unless described",
-    ].join(", ");
+    // ── Step 4: Generate background via Flux 2 Pro using brief.flux_prompt ──
+    const backgroundBuffer = await generateFluxBackground(brief.flux_prompt, brief.flux_negative);
+    console.log(`[autoCreative] Background | elapsed=${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
 
-    const backgroundBuffer = await generateFluxBackground(fluxPrompt);
-    console.log(`[autoCreative] Background generated | elapsed=${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
-
-    // ── Step 5: Composite final image ──
+    // ── Step 5: Fetch product image ──
     const productBuffer = await fetchBuffer(productImage.imageUrl);
 
-    let primaryColor = brand.logoColorPrimary ?? DEFAULT_PRIMARY;
-    let secondaryColor = brand.logoColorSecondary ?? DEFAULT_SECONDARY;
+    // ── Step 6: Fetch logo (for SVG overlay) ──
     let logoDataUri: string | null = null;
-
     if (brand.logoUrl) {
       const logoBuffer = await fetchBuffer(brand.logoUrl).catch(() => null);
       if (logoBuffer) {
-        if (!brand.logoColorPrimary || !brand.logoColorSecondary) {
-          const { primary, secondary } = await extractDominantColors(logoBuffer).catch(() => ({
-            primary: DEFAULT_PRIMARY,
-            secondary: DEFAULT_SECONDARY,
-          }));
-          primaryColor = primary;
-          secondaryColor = secondary;
-          // Cache for future calls
-          await prisma.brand
-            .update({ where: { id: brandId }, data: { logoColorPrimary: primaryColor, logoColorSecondary: secondaryColor } })
-            .catch(() => {});
-        }
-        // Convert logo to base64 data URI for SVG embedding
         const pngBuf = await sharp(logoBuffer).png().toBuffer();
         logoDataUri = `data:image/png;base64,${pngBuf.toString("base64")}`;
       }
     }
 
+    // ── Step 7: Composite final image ──
     const finalBuffer = await compositeCreativeImage({
       backgroundBuffer,
       productBuffer,
       logoDataUri,
       brief,
-      primaryColor,
-      secondaryColor,
     });
     console.log(`[autoCreative] Composited | elapsed=${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
 
-    // ── Upload to Cloudinary ──
+    // ── Step 8: Upload to Cloudinary ──
     const imageUrl = await uploadToCloudinary(finalBuffer, brandId);
     console.log(`[autoCreative] Uploaded | ${imageUrl}`);
 
-    // ── Step 6: Generate caption ──
-    const brandDnaBlock = brandContext;
+    // ── Step 9: Generate caption ──
+    const brandContext = await getBrandContext(brandId).catch(() => "");
     const campaignBrief = occasion
       ? `${occasion.name} promotional post for ${brand.brandName}. ${occasion.hook}. Product: ${brand.whatTheySell ?? brand.industry}.`
       : `Brand awareness post for ${brand.brandName}. ${brief.subheadline}. Product: ${brand.whatTheySell ?? brand.industry}.`;
 
-    const { captions } = await generateCaptionSet(brandDnaBlock, campaignBrief, "promotional").catch(
+    const { captions } = await generateCaptionSet(brandContext, campaignBrief, "promotional").catch(
       () => ({ captions: [], seo_keywords: [] })
     );
 
@@ -625,7 +598,7 @@ export async function generateAutoCreative(
     const captionText = bestCaption?.full_caption ?? `${brief.headline} — ${brief.subheadline}`;
     const hashtags = bestCaption?.hashtags ?? [];
 
-    // ── Step 7: Save to database ──
+    // ── Step 10: Save to database ──
     const post = await prisma.generatedPost.create({
       data: {
         brandId,
