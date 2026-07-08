@@ -182,16 +182,23 @@ async function run() {
   console.log(`\n  Caption:`);
   console.log(`  ${(post?.caption ?? "").split("\n").join("\n  ")}`);
   console.log(`\n  Hashtags: ${(post?.hashtags ?? []).join(" ")}`);
-  console.log(`\n  Creative Data:`);
+  console.log(`\n  Creative Brief:`);
   if (post?.creativeData) {
     const cd = post.creativeData;
-    console.log(`    headline       : ${cd.headline}`);
-    console.log(`    subheadline    : ${cd.subheadline}`);
-    console.log(`    cta            : ${cd.cta}`);
-    console.log(`    background     : ${cd.background_scene}`);
-    console.log(`    placement      : ${cd.product_placement}`);
-    console.log(`    layout         : ${cd.layout}`);
-    console.log(`    feature_badges : ${(cd.feature_badges ?? []).join(", ")}`);
+    console.log(`    headline         : ${cd.headline}`);
+    console.log(`    headline_accent  : ${cd.headline_accent}`);
+    console.log(`    subheadline      : ${cd.subheadline}`);
+    console.log(`    cta              : ${cd.cta}`);
+    console.log(`    layout_style     : ${cd.layout_style}`);
+    console.log(`    product_placement: ${cd.product_placement}`);
+    console.log(`    product_size     : ${cd.product_size}`);
+    console.log(`    primary_color    : ${cd.primary_color}`);
+    console.log(`    accent_color     : ${cd.accent_color}`);
+    console.log(`    feature_badges   : ${(cd.feature_badges ?? []).join(" | ")}`);
+    console.log(`    occasion_badge   : ${cd.occasion_badge ?? "(none)"}`);
+    console.log(`    background_scene : ${(cd.background_scene ?? "").slice(0, 120)}...`);
+    const fluxWords = (cd.flux_prompt ?? "").split(/\s+/).filter(Boolean);
+    console.log(`    flux_prompt (50w): ${fluxWords.slice(0, 50).join(" ")}`);
   }
 
   console.log(`\n${"─".repeat(60)}`);

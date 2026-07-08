@@ -1,6 +1,7 @@
 import { v2 as cloudinary } from "cloudinary";
 import sharp from "sharp";
 import type { OverlayOptions } from "sharp";
+import { createCanvas, loadImage } from "canvas";
 import prisma from "../utils/prisma";
 import { getBrandContext } from "./brandDNA.service";
 import { generateCaptionSet, pickBestCaption } from "./contentService";
@@ -148,23 +149,6 @@ async function fetchBuffer(url: string): Promise<Buffer> {
   return Buffer.from(await res.arrayBuffer());
 }
 
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-function hexToRgba(hex: string, alpha: number): string {
-  const c = hex.replace("#", "");
-  const r = parseInt(c.slice(0, 2), 16);
-  const g = parseInt(c.slice(2, 4), 16);
-  const b = parseInt(c.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
 // ─── White background removal ─────────────────────────────────────────────────
 // Walks every pixel; sets alpha to 0 for near-white (all channels > threshold).
 // Only called when sharp().stats() confirms the image is predominantly white.
@@ -199,27 +183,24 @@ function buildGradientSvg(
   let gradientDef: string;
 
   if (layoutStyle === "split" && placement === "right") {
-    // Product on right → dark gradient from left 60% of canvas
     gradientDef = `<linearGradient id="grad" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0%"   stop-color="black" stop-opacity="0.72"/>
       <stop offset="60%"  stop-color="black" stop-opacity="0.35"/>
       <stop offset="100%" stop-color="black" stop-opacity="0"/>
     </linearGradient>`;
   } else if (layoutStyle === "split" && placement === "left") {
-    // Product on left → dark gradient from right 60% of canvas
     gradientDef = `<linearGradient id="grad" x1="1" y1="0" x2="0" y2="0">
       <stop offset="0%"   stop-color="black" stop-opacity="0.72"/>
       <stop offset="60%"  stop-color="black" stop-opacity="0.35"/>
       <stop offset="100%" stop-color="black" stop-opacity="0"/>
     </linearGradient>`;
   } else if (layoutStyle === "overlay") {
-    // Radial vignette around all edges
     gradientDef = `<radialGradient id="grad" cx="50%" cy="50%" r="70%">
       <stop offset="0%"   stop-color="black" stop-opacity="0"/>
       <stop offset="100%" stop-color="black" stop-opacity="0.55"/>
     </radialGradient>`;
   } else {
-    // minimal / full-bleed: light overlay on bottom 30% only
+    // minimal / full-bleed
     gradientDef = `<linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
       <stop offset="70%"  stop-color="black" stop-opacity="0"/>
       <stop offset="100%" stop-color="black" stop-opacity="0.40"/>
@@ -233,153 +214,146 @@ function buildGradientSvg(
   return Buffer.from(svg);
 }
 
-// ─── Text + UI overlay SVG ────────────────────────────────────────────────────
+// ─── Canvas text layer ────────────────────────────────────────────────────────
+// Uses node-canvas (npm: canvas) for text rendering. Canvas uses system fonts
+// via fontconfig on Linux — renders reliably on Railway without librsvg issues.
 
-function buildTextOverlaySvg(brief: CreativeBrief, logoDataUri: string | null): Buffer {
-  const placement = brief.product_placement;
+type Ctx2D = ReturnType<ReturnType<typeof createCanvas>["getContext"]>;
+
+function roundRect(ctx: Ctx2D, x: number, y: number, w: number, h: number, r: number): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+async function buildTextLayer(
+  brief: CreativeBrief,
+  logoBuffer: Buffer | null,
+  canvasWidth: number,
+  canvasHeight: number
+): Promise<Buffer> {
+  const canvas = createCanvas(canvasWidth, canvasHeight);
+  const ctx = canvas.getContext("2d");
   const primary = brief.primary_color;
   const accent = brief.accent_color;
 
-  // Text column: left half for product-right layouts, right half for product-left
-  const isProductRight = placement === "right";
-  const isProductLeft = placement === "left";
-  const textX = isProductLeft ? Math.round(CANVAS_W / 2) + 40 : 40;
-  const textMaxW = Math.round(CANVAS_W / 2) - 80;
+  // ── Logo (top-left) ──
+  if (logoBuffer) {
+    try {
+      const logoImg = await loadImage(logoBuffer);
+      ctx.globalAlpha = 0.95;
+      ctx.drawImage(logoImg, 40, 40, 200, 70);
+      ctx.globalAlpha = 1;
+    } catch {
+      // skip if logo fails to load
+    }
+  }
 
-  // Headline Y positions (spec: y=380, line height 80px)
-  const HL_Y1 = 380;
-  const HL_Y2 = HL_Y1 + 80;
-  const SUB_Y = 560;
-
-  // Feature badges
-  const badges = (brief.feature_badges ?? []).slice(0, 3);
-  const BADGE_Y = 650;
-  const BADGE_H = 32;
-  const BADGE_R = 14;
-  const BADGE_GAP = 12;
-  const BADGE_PX = 14;
-  const BADGE_FONT = 13;
-
-  // Bottom bar (spec: y=1260, height=90)
-  const BAR_Y = 1260;
-  const BAR_H = 90;
-  const CTA_W = 200;
-  const CTA_H = 52;
-  const CTA_X = 830;
-  const CTA_Y = BAR_Y + (BAR_H - CTA_H) / 2; // vertically centered in bar
-
-  // Occasion badge (top-right, spec: x=820, y=40)
-  const BADGE_OCC_W = 220;
-  const BADGE_OCC_H = 44;
-  const BADGE_OCC_X = isProductRight ? CANVAS_W - BADGE_OCC_W - 30 : 30;
-
-  // Logo (top of text column)
-  const LOGO_W = 216; // 20% of 1080
-  const LOGO_H = 80;
-  const logoX = isProductLeft ? CANVAS_W - LOGO_W - 30 : 30;
-
-  const elements: string[] = [];
-
-  // ── Occasion badge (top-right) ──
+  // ── Occasion badge (top-right pill) ──
   if (brief.occasion_badge) {
-    const occ = escapeXml(brief.occasion_badge);
-    elements.push(`
-      <rect x="${BADGE_OCC_X}" y="40" width="${BADGE_OCC_W}" height="${BADGE_OCC_H}" rx="22" ry="22"
-        fill="${primary}" opacity="0.92"/>
-      <text x="${BADGE_OCC_X + BADGE_OCC_W / 2}" y="${40 + BADGE_OCC_H / 2 + 1}"
-        text-anchor="middle" dominant-baseline="central"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
-        font-size="14" font-weight="bold" fill="white">${occ}</text>
-    `);
+    const OCC_X = 820, OCC_Y = 35, OCC_W = 220, OCC_H = 44;
+    roundRect(ctx, OCC_X, OCC_Y, OCC_W, OCC_H, 22);
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = primary;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.font = "bold 14px sans-serif";
+    ctx.fillStyle = "#FFFFFF";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(brief.occasion_badge, OCC_X + OCC_W / 2, OCC_Y + OCC_H / 2);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
   }
 
-  // ── Brand logo (top of text column) ──
-  if (logoDataUri) {
-    elements.push(`
-      <image href="${logoDataUri}" x="${logoX}" y="50" width="${LOGO_W}" height="${LOGO_H}"
-        preserveAspectRatio="xMinYMid meet" opacity="0.95"/>
-    `);
-  }
+  // ── Headline line 1 (white) ──
+  ctx.font = "bold 68px sans-serif";
+  ctx.fillStyle = "#FFFFFF";
+  ctx.fillText(brief.headline, 40, 420);
 
-  // ── Headline line 1: brief.headline (white) ──
-  if (brief.headline) {
-    elements.push(`
-      <text x="${textX}" y="${HL_Y1}"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
-        font-size="68" font-weight="bold" fill="white" dominant-baseline="auto">${escapeXml(brief.headline)}</text>
-    `);
-  }
-
-  // ── Headline line 2: brief.headline_accent (accent color) ──
-  if (brief.headline_accent) {
-    elements.push(`
-      <text x="${textX}" y="${HL_Y2}"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
-        font-size="68" font-weight="bold" fill="${accent}" dominant-baseline="auto">${escapeXml(brief.headline_accent)}</text>
-    `);
-  }
+  // ── Headline line 2 / accent ──
+  ctx.font = "bold 68px sans-serif";
+  ctx.fillStyle = accent;
+  ctx.fillText(brief.headline_accent, 40, 500);
 
   // ── Subheadline ──
-  if (brief.subheadline) {
-    elements.push(`
-      <text x="${textX}" y="${SUB_Y}"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
-        font-size="22" fill="rgba(255,255,255,0.85)" dominant-baseline="auto">${escapeXml(brief.subheadline)}</text>
-    `);
-  }
+  ctx.font = "22px sans-serif";
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.fillText(brief.subheadline, 40, 560);
 
   // ── Divider line ──
-  elements.push(`
-    <rect x="${textX}" y="600" width="160" height="2" fill="${accent}"/>
-  `);
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(40, 590);
+  ctx.lineTo(200, 590);
+  ctx.stroke();
 
-  // ── Feature badges (horizontal row, y=650) ──
-  let badgeCurX = textX;
-  badges.forEach((badge) => {
-    const text = escapeXml(badge);
-    const approxW = Math.max(80, text.length * BADGE_FONT * 0.54 + BADGE_PX * 2 + 18);
-    if (badgeCurX + approxW > textX + textMaxW) return;
-    elements.push(`
-      <rect x="${badgeCurX}" y="${BADGE_Y}" width="${approxW}" height="${BADGE_H}" rx="${BADGE_R}" ry="${BADGE_R}"
-        fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.30)" stroke-width="1"/>
-      <circle cx="${badgeCurX + 14}" cy="${BADGE_Y + BADGE_H / 2}" r="4" fill="${accent}"/>
-      <text x="${badgeCurX + 26}" y="${BADGE_Y + BADGE_H / 2 + 1}"
-        dominant-baseline="central"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
-        font-size="${BADGE_FONT}" fill="rgba(255,255,255,0.90)">${text}</text>
-    `);
-    badgeCurX += approxW + BADGE_GAP;
-  });
+  // ── Feature badges (horizontal row, y=630) ──
+  const badges = (brief.feature_badges ?? []).slice(0, 3);
+  const BADGE_Y = 630;
+  const BADGE_H = 32;
+  const BADGE_PAD = 14;
+  let badgeX = 40;
+
+  ctx.font = "13px sans-serif";
+  for (const badge of badges) {
+    const textW = ctx.measureText(badge).width;
+    const badgeW = Math.max(80, textW + BADGE_PAD * 2);
+    if (badgeX + badgeW > 480) break;
+
+    roundRect(ctx, badgeX, BADGE_Y, badgeW, BADGE_H, 14);
+    ctx.fillStyle = "rgba(255,255,255,0.12)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.30)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(255,255,255,0.90)";
+    ctx.textBaseline = "middle";
+    ctx.fillText(badge, badgeX + BADGE_PAD, BADGE_Y + BADGE_H / 2);
+    ctx.textBaseline = "alphabetic";
+
+    badgeX += badgeW + 12;
+  }
 
   // ── Bottom bar ──
-  elements.push(`
-    <rect x="0" y="${BAR_Y}" width="${CANVAS_W}" height="${BAR_H}" fill="${hexToRgba(primary, 0.90)}"/>
-  `);
+  ctx.globalAlpha = 0.90;
+  ctx.fillStyle = primary;
+  ctx.fillRect(0, 1260, canvasWidth, 90);
+  ctx.globalAlpha = 1;
 
   if (brief.tagline) {
-    elements.push(`
-      <text x="30" y="${BAR_Y + BAR_H / 2 + 1}" dominant-baseline="central"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
-        font-size="14" fill="rgba(255,255,255,0.82)">${escapeXml(brief.tagline)}</text>
-    `);
+    ctx.font = "14px sans-serif";
+    ctx.fillStyle = "rgba(255,255,255,0.82)";
+    ctx.textBaseline = "middle";
+    ctx.fillText(brief.tagline, 40, 1305);
+    ctx.textBaseline = "alphabetic";
   }
 
   // ── CTA button ──
-  if (brief.cta) {
-    elements.push(`
-      <rect x="${CTA_X}" y="${CTA_Y}" width="${CTA_W}" height="${CTA_H}" rx="22" ry="22" fill="white"/>
-      <text x="${CTA_X + CTA_W / 2}" y="${CTA_Y + CTA_H / 2 + 1}"
-        text-anchor="middle" dominant-baseline="central"
-        font-family="'Liberation Sans', 'DejaVu Sans', Arial, sans-serif"
-        font-size="15" font-weight="bold" fill="${primary}">${escapeXml(brief.cta)}</text>
-    `);
-  }
+  const CTA_X = 830, CTA_Y = 1268, CTA_W = 200, CTA_H = 52;
+  roundRect(ctx, CTA_X, CTA_Y, CTA_W, CTA_H, 22);
+  ctx.fillStyle = "#FFFFFF";
+  ctx.fill();
 
-  const svg = `<svg width="${CANVAS_W}" height="${CANVAS_H}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-    ${elements.join("\n")}
-  </svg>`;
+  ctx.font = "bold 15px sans-serif";
+  ctx.fillStyle = primary;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(brief.cta, CTA_X + CTA_W / 2, CTA_Y + CTA_H / 2);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
 
-  return Buffer.from(svg);
+  return canvas.toBuffer("image/png");
 }
 
 // ─── Sharp compositing ────────────────────────────────────────────────────────
@@ -387,10 +361,10 @@ function buildTextOverlaySvg(brief: CreativeBrief, logoDataUri: string | null): 
 async function compositeCreativeImage(opts: {
   backgroundBuffer: Buffer;
   productBuffer: Buffer;
-  logoDataUri: string | null;
+  logoBuffer: Buffer | null;
   brief: CreativeBrief;
 }): Promise<Buffer> {
-  const { backgroundBuffer, productBuffer, logoDataUri, brief } = opts;
+  const { backgroundBuffer, productBuffer, logoBuffer, brief } = opts;
 
   // ── Resize background to exact canvas ──
   const bg = await sharp(backgroundBuffer)
@@ -422,7 +396,7 @@ async function compositeCreativeImage(opts: {
   const productW = productMeta.width ?? PRODUCT_TARGET_W;
   const productH = productMeta.height ?? PRODUCT_TARGET_W;
 
-  // ── Product placement coordinates (spec) ──
+  // ── Product placement coordinates ──
   const placement = brief.product_placement;
   let productLeft: number;
   let productTop: number;
@@ -442,11 +416,10 @@ async function compositeCreativeImage(opts: {
     productTop = Math.round(CANVAS_H * 0.30);
   }
 
-  // Clamp to canvas — leave room for bottom bar (90px)
   productLeft = Math.max(0, Math.min(productLeft, CANVAS_W - productW));
   productTop = Math.max(0, Math.min(productTop, CANVAS_H - productH - 90));
 
-  // ── Drop shadow (blur 25px, opacity 35%) ──
+  // ── Drop shadow (blur 25px) ──
   const shadowPad = 25;
   const canvasWS = productW + shadowPad * 2;
   const canvasHS = productH + shadowPad * 2;
@@ -467,7 +440,10 @@ async function compositeCreativeImage(opts: {
     .png()
     .toBuffer();
 
-  // ── Composite: background → gradient → product → SVG text ──
+  // ── Canvas text layer ──
+  const textBuffer = await buildTextLayer(brief, logoBuffer, CANVAS_W, CANVAS_H);
+
+  // ── Composite: background → gradient → product → text ──
   const composites: OverlayOptions[] = [
     { input: buildGradientSvg(brief.layout_style, placement), left: 0, top: 0 },
     {
@@ -475,7 +451,7 @@ async function compositeCreativeImage(opts: {
       left: Math.max(0, productLeft - shadowPad),
       top: Math.max(0, productTop - shadowPad),
     },
-    { input: buildTextOverlaySvg(brief, logoDataUri), left: 0, top: 0 },
+    { input: textBuffer, left: 0, top: 0 },
   ];
 
   return sharp(bg)
@@ -554,28 +530,24 @@ export async function generateAutoCreative(
       `[autoCreative] Brief | headline="${brief.headline}" layout=${brief.layout_style} placement=${brief.product_placement}`
     );
 
-    // ── Step 4: Generate background via Flux 2 Pro using brief.flux_prompt ──
+    // ── Step 4: Generate background via Flux 2 Pro ──
     const backgroundBuffer = await generateFluxBackground(brief.flux_prompt, brief.flux_negative);
     console.log(`[autoCreative] Background | elapsed=${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
 
     // ── Step 5: Fetch product image ──
     const productBuffer = await fetchBuffer(productImage.imageUrl);
 
-    // ── Step 6: Fetch logo (for SVG overlay) ──
-    let logoDataUri: string | null = null;
+    // ── Step 6: Fetch logo buffer for canvas rendering ──
+    let logoBuffer: Buffer | null = null;
     if (brand.logoUrl) {
-      const logoBuffer = await fetchBuffer(brand.logoUrl).catch(() => null);
-      if (logoBuffer) {
-        const pngBuf = await sharp(logoBuffer).png().toBuffer();
-        logoDataUri = `data:image/png;base64,${pngBuf.toString("base64")}`;
-      }
+      logoBuffer = await fetchBuffer(brand.logoUrl).catch(() => null);
     }
 
     // ── Step 7: Composite final image ──
     const finalBuffer = await compositeCreativeImage({
       backgroundBuffer,
       productBuffer,
-      logoDataUri,
+      logoBuffer,
       brief,
     });
     console.log(`[autoCreative] Composited | elapsed=${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
