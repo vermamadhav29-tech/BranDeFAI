@@ -17,6 +17,7 @@ import {
   Pencil,
   Check,
   AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import apiClient from "@/lib/apiClient";
 import { toast } from "@/lib/toast";
@@ -150,6 +151,7 @@ function PostCard({
   onStatusChange: (id: string, status: PostStatus) => void;
   onDelete: (id: string) => void;
 }) {
+  const [imgError, setImgError] = useState(false);
   const [editingCaption, setEditingCaption] = useState(false);
   const [captionDraft, setCaptionDraft] = useState(post.caption ?? "");
   const [savingCaption, setSavingCaption] = useState(false);
@@ -221,13 +223,21 @@ function PostCard({
       >
         {/* Post image */}
         <div className="relative overflow-hidden bg-gray-100" style={{ aspectRatio: "4 / 5" }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={post.imageUrl}
-            alt="AI generated post"
-            className="w-full h-full object-cover"
-            loading="lazy"
-          />
+          {imgError ? (
+            <div className="w-full h-full flex flex-col items-center justify-center gap-2">
+              <ImageIcon size={32} className="text-gray-300" />
+              <p className="text-xs text-gray-400">Image unavailable</p>
+            </div>
+          ) : (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={post.imageUrl}
+              alt="AI generated post"
+              className="w-full h-full object-cover"
+              loading="lazy"
+              onError={() => setImgError(true)}
+            />
+          )}
 
           {/* Occasion badge */}
           {post.occasionName && (
@@ -350,6 +360,13 @@ export default function ImagesPage() {
   const [uploadDrag, setUploadDrag] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Refresh key — increment to re-fetch posts (after fire-and-forget upload completes)
+  const [postsRefreshTick, setPostsRefreshTick] = useState(0);
+  const refreshTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // Clean up scheduled refreshes on unmount
+  useEffect(() => () => refreshTimersRef.current.forEach(clearTimeout), []);
+
   // AI override (collapsed by default)
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [overrideText, setOverrideText] = useState("");
@@ -381,8 +398,10 @@ export default function ImagesPage() {
       .finally(() => setProductsLoaded(true));
   }, [brand]);
 
-  // ── Load posts ──
+  // ── Load posts (re-runs when postsRefreshTick increments) ──
   useEffect(() => {
+    // On initial load show the skeleton; on background refreshes keep existing posts visible
+    if (postsRefreshTick === 0) setPostsLoaded(false);
     apiClient
       .get<{ success: boolean; data: { posts: GeneratedPost[] } }>("/api/creative/posts")
       .then((res) => {
@@ -392,7 +411,7 @@ export default function ImagesPage() {
       })
       .catch(() => {})
       .finally(() => setPostsLoaded(true));
-  }, []);
+  }, [postsRefreshTick]);
 
   // ── Load occasion ──
   useEffect(() => {
@@ -431,6 +450,12 @@ export default function ImagesPage() {
         setProducts((prev) => [newImg, ...prev]);
         setSelectedProductId(newImg.id);
         toast.success("Photo uploaded! Generating your post in the background…");
+
+        // Background generation takes ~90–150s; schedule two auto-refreshes to
+        // surface the new post without requiring a manual page reload.
+        const t1 = setTimeout(() => setPostsRefreshTick((n) => n + 1), 95_000);
+        const t2 = setTimeout(() => setPostsRefreshTick((n) => n + 1), 165_000);
+        refreshTimersRef.current.push(t1, t2);
       }
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: string } }; message?: string };
@@ -701,6 +726,16 @@ export default function ImagesPage() {
               </span>
             )}
           </h2>
+          <button
+            type="button"
+            onClick={() => setPostsRefreshTick((n) => n + 1)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors hover:opacity-70"
+            style={{ borderColor: "var(--border-color)", color: "var(--text-muted)" }}
+            title="Refresh posts"
+          >
+            <RefreshCw size={12} />
+            Refresh
+          </button>
         </div>
 
         {!postsLoaded ? (

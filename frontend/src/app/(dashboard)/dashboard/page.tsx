@@ -671,12 +671,39 @@ export default function DashboardPage() {
     }
   }
 
-  // Static data (real fetching reconnected once loop is resolved)
-  const creditsBalance = user?.creditsBalance ?? 45;
-  const contentCount   = 0;
-  const calendarFilled = 0;
-  const imagesCount    = 0;
+  const [contentCount,   setContentCount]   = useState(0);
+  const [calendarFilled, setCalendarFilled] = useState(0);
+  const [imagesCount,    setImagesCount]    = useState(0);
+  const [statsLoading,   setStatsLoading]   = useState(true);
 
+  useEffect(() => {
+    Promise.all([
+      apiClient.get<{
+        success: boolean;
+        data: { weeklyContent: number; calendar: Array<{ value: number }> };
+      }>("/api/dashboard/trends"),
+      apiClient.get<{ success: boolean; data: { total: number } }>(
+        "/api/creative/posts?limit=1"
+      ),
+    ])
+      .then(([trendsRes, postsRes]) => {
+        if (trendsRes.data.success) {
+          setContentCount(trendsRes.data.data.weeklyContent ?? 0);
+          const calSum = (trendsRes.data.data.calendar ?? []).reduce(
+            (s, d) => s + d.value,
+            0
+          );
+          setCalendarFilled(calSum);
+        }
+        if (postsRes.data.success) {
+          setImagesCount(postsRes.data.data.total ?? 0);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setStatsLoading(false));
+  }, []);
+
+  const creditsBalance = user?.creditsBalance ?? 0;
   const max          = PLAN_MAX[(user?.plan as PlanKey) ?? "FREE"] ?? 50;
   const isLowCredits = creditsBalance < max * 0.2;
   const nextReset    = new Date();
@@ -728,27 +755,29 @@ export default function DashboardPage() {
             <StatCard
               label="Content Generated"
               value={contentCount}
-              sub="No new content this week"
+              sub={contentCount > 0 ? `${contentCount} this week` : "No content this week"}
               icon={Sparkles}
               iconBg="bg-purple-50"
               iconColor="text-[var(--accent-purple)]"
+              loading={statsLoading}
             />
             <StatCard
               label="Calendar Days Filled"
               value={calendarFilled}
-              sub={`${calendarFilled} of 30 days`}
+              sub={calendarFilled > 0 ? `${calendarFilled} entries this week` : "No entries this week"}
               icon={CalendarCheck}
               iconBg="bg-sky-50"
               iconColor="text-sky-500"
-              progress={calendarFilled / 30}
+              loading={statsLoading}
             />
             <StatCard
-              label="Images Created"
+              label="Posts Created"
               value={imagesCount}
-              sub="0 this month"
+              sub={imagesCount === 1 ? "1 AI post generated" : `${imagesCount} AI posts generated`}
               icon={Image}
               iconBg="bg-pink-50"
               iconColor="text-pink-500"
+              loading={statsLoading}
             />
           </motion.div>
 
