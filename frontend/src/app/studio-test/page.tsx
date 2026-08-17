@@ -52,7 +52,7 @@ const S = {
     minHeight: "100vh",
     background: "#0c0c0c",
     color: "#e8e8e8",
-    fontFamily: "'Inter', system-ui, sans-serif",
+    fontFamily: "'Inter', system-ui, -apple-system, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif",
     padding: "36px 28px",
   } satisfies React.CSSProperties,
 

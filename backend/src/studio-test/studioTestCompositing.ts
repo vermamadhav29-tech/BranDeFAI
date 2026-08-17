@@ -87,8 +87,11 @@ export interface CompositingInput {
 }
 
 // ─── White background removal ─────────────────────────────────────────────────
+// threshold=215 catches JPEG-compressed near-white pixels (JPEG encodes pure
+// white as ~240-252, and compression artifacts can push "background" pixels
+// down to ~220 — 215 is the safe floor that still spares coloured products).
 
-async function removeWhiteBg(buf: Buffer, threshold = 228): Promise<Buffer> {
+async function removeWhiteBg(buf: Buffer, threshold = 215): Promise<Buffer> {
   const { data, info } = await sharp(buf)
     .ensureAlpha()
     .raw()
@@ -146,6 +149,28 @@ function fitTextWidth(
     ctx.font = ctx.font.replace(/\d+px/, `${size}px`);
   }
   return size;
+}
+
+// ─── Drop shadow ──────────────────────────────────────────────────────────────
+// Creates a pure-black image with the product's alpha at 60% opacity, then
+// blurs it. Sharp's .tint({r:0,g:0,b:0}) preserves luminance not colour, so
+// we extract the alpha channel manually to guarantee a correctly dark shadow.
+
+async function buildDropShadow(prodBuf: Buffer, blur = 22): Promise<Buffer> {
+  const { data, info } = await sharp(prodBuf)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const { width, height } = info;
+  // Pure black pixels, alpha = 60% of product alpha
+  const pixels = Buffer.alloc(width * height * 4, 0);
+  for (let i = 0; i < width * height; i++) {
+    pixels[i * 4 + 3] = Math.round(Number(data[i * 4 + 3]) * 0.6);
+  }
+  return sharp(pixels, { raw: { width, height, channels: 4 } })
+    .blur(blur)
+    .png()
+    .toBuffer();
 }
 
 // ─── Text canvas layer ────────────────────────────────────────────────────────
@@ -252,31 +277,41 @@ export async function compositeStudioImage(input: CompositingInput): Promise<Buf
     </svg>`,
   );
 
-  // 3. Product — remove white background if present
+  // 3. Product — remove white background
+  // Detection: channel mean > 200 catches dark products on white bg (earrings,
+  // jewellery etc. can pull the full-image mean down to ~210 even on pure white).
   const stats = await sharp(productBuffer).stats();
   const isWhiteBg =
-    stats.channels[0].mean > 220 &&
-    stats.channels[1].mean > 220 &&
-    stats.channels[2].mean > 220;
+    stats.channels[0].mean > 200 &&
+    stats.channels[1].mean > 200 &&
+    stats.channels[2].mean > 200;
   const cleanProd = isWhiteBg ? await removeWhiteBg(productBuffer) : productBuffer;
-  log(`[compositing] product whiteBg=${isWhiteBg}`);
+  log(`[compositing] product whiteBg=${isWhiteBg} (R/G/B means: ${stats.channels.slice(0,3).map(c => c.mean.toFixed(0)).join("/")})`);
 
-  const PW = Math.round(W * 0.43);
-  const prodResized = await sharp(cleanProd).resize({ width: PW }).toBuffer();
-  const pm = await sharp(prodResized).metadata();
-  const PH = pm.height ?? PW;
-
-  // Right-center placement, slightly raised
-  const PAD = 28;
-  const prodLeft = Math.round(W * 0.49);
-  const prodTop = Math.max(0, Math.round((H * 0.85 - PH) / 2));
-
-  // 4. Drop shadow
-  const shadowBuf = await sharp(prodResized)
-    .ensureAlpha()
-    .tint({ r: 0, g: 0, b: 0 })
-    .blur(20)
+  // Cap at 55% of canvas width and 62% of canvas height — preserves aspect ratio
+  const PW_MAX = Math.round(W * 0.55);
+  const PH_MAX = Math.round(H * 0.62);
+  const prodResized = await sharp(cleanProd)
+    .resize({ width: PW_MAX, height: PH_MAX, fit: "inside" })
     .toBuffer();
+  const pm = await sharp(prodResized).metadata();
+  const PW = pm.width  ?? PW_MAX;
+  const PH = pm.height ?? PH_MAX;
+
+  // Center horizontally; vertically target product center at ~58% of canvas,
+  // clamped so it never starts above 22% or clips into the 92px bottom bar.
+  const PAD = 28;
+  const prodLeft = Math.round((W - PW) / 2);
+  const prodTop = Math.max(
+    Math.round(H * 0.22),
+    Math.min(
+      Math.round(H * 0.58 - PH / 2),
+      H - 92 - PH - 20,
+    ),
+  );
+
+  // 4. Drop shadow — black silhouette at 60% alpha, blurred + offset
+  const shadowBuf = await buildDropShadow(prodResized);
 
   const prodWithShadow = await sharp({
     create: {
@@ -287,12 +322,12 @@ export async function compositeStudioImage(input: CompositingInput): Promise<Buf
     },
   })
     .composite([
-      { input: shadowBuf, left: PAD + 5, top: PAD + 8, blend: "multiply" },
-      { input: prodResized, left: PAD, top: PAD },
+      { input: shadowBuf, left: PAD + 12, top: PAD + 16, blend: "over" },
+      { input: prodResized, left: PAD, top: PAD, blend: "over" },
     ])
     .png()
     .toBuffer();
-  log(`[compositing] product+shadow: ${PW}×${PH}`);
+  log(`[compositing] product+shadow: ${PW}×${PH} at (${prodLeft},${prodTop})`);
 
   // 5. Text layer
   const textBuf = await buildTextLayer(text, log);
@@ -304,7 +339,7 @@ export async function compositeStudioImage(input: CompositingInput): Promise<Buf
     {
       input: prodWithShadow,
       left: Math.max(0, prodLeft - PAD),
-      top: Math.max(0, prodTop - PAD),
+      top:  Math.max(0, prodTop  - PAD),
     },
     { input: textBuf, left: 0, top: 0 },
   ];
