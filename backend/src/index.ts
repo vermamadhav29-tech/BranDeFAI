@@ -19,6 +19,7 @@ import uploadsRoutes from "./routes/uploads";
 import instagramRoutes from "./routes/instagram";
 import dashboardRoutes from "./routes/dashboard";
 import creativeRoutes from "./routes/creative";
+import studioTestRoutes from "./routes/studioTest.routes";
 import { errorHandler } from "./middleware/errorHandler";
 import "./jobs/videoExportWorker"; // starts the BullMQ worker process
 import { startCreditRefreshJob } from "./jobs/creditRefreshJob";
@@ -44,9 +45,11 @@ app.use(
         callback(null, false);
         return;
       }
-      if (ALLOWED_ORIGINS.has(origin)) {
-        // Echo the exact request origin so Access-Control-Allow-Origin always matches
-        // the page the browser is on (brandefai.com OR www.brandefai.com).
+      if (
+        ALLOWED_ORIGINS.has(origin) ||
+        // Allow Vercel preview deployments (feature-branch previews)
+        /^https:\/\/[^.]+\.vercel\.app$/.test(origin)
+      ) {
         callback(null, origin);
       } else {
         callback(new Error(`CORS: origin '${origin}' not allowed`));
@@ -95,6 +98,7 @@ app.use("/api/uploads", uploadsRoutes);
 app.use("/api/instagram", instagramRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/creative",  creativeRoutes);
+app.use("/api/studio-test", studioTestRoutes);
 
 // Global error handler
 app.use(errorHandler);
