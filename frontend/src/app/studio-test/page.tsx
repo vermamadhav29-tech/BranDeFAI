@@ -21,6 +21,7 @@ interface ModelResult {
 
 interface ResponseData {
   productImageUrl: string;
+  logoUrl?: string;
   results: ModelResult[];
   textParams: { headline: string; subheadline: string; cta: string };
   logs: string[];
@@ -239,8 +240,10 @@ export default function StudioTestPage() {
   const [tone,         setTone]         = useState("Luxury, Elegant, Premium");
   const [primaryColor, setPrimaryColor] = useState("#1A7A4A");
   const [accentColor,  setAccentColor]  = useState("#FFD700");
-  const [productFile,  setProductFile]  = useState<File | null>(null);
+  const [productFile,    setProductFile]    = useState<File | null>(null);
   const [productPreview, setProductPreview] = useState<string | null>(null);
+  const [logoFile,       setLogoFile]       = useState<File | null>(null);
+  const [logoPreview,    setLogoPreview]    = useState<string | null>(null);
 
   const [loading,  setLoading]  = useState(false);
   const [stage,    setStage]    = useState("Generating…");
@@ -248,13 +251,20 @@ export default function StudioTestPage() {
   const [error,    setError]    = useState<string | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const logoRef = useRef<HTMLInputElement>(null);
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
     setProductFile(f);
-    const prev = URL.createObjectURL(f);
-    setProductPreview(prev);
+    setProductPreview(URL.createObjectURL(f));
+  }
+
+  function handleLogoChange(e: ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setLogoFile(f);
+    setLogoPreview(URL.createObjectURL(f));
   }
 
   const handleSubmit = useCallback(
@@ -275,9 +285,15 @@ export default function StudioTestPage() {
         form.append("tone",         tone.trim());
         form.append("primaryColor", primaryColor);
         form.append("accentColor",  accentColor);
-        form.append("image",        productFile, productFile.name);
+        form.append("image", productFile, productFile.name);
+        // Logo is optional — backend skips overlay step if absent
+        if (logoFile) form.append("logo", logoFile, logoFile.name);
 
-        setStage("Generating Flux + Ideogram backgrounds in parallel…");
+        setStage(
+          logoFile
+            ? "Generating backgrounds + logo overlay (Flux + Ideogram in parallel)…"
+            : "Generating Flux + Ideogram backgrounds in parallel…",
+        );
 
         const res = await fetch(`${API_BASE}/api/studio-test/generate`, {
           method: "POST",
@@ -304,7 +320,7 @@ export default function StudioTestPage() {
         setLoading(false);
       }
     },
-    [brandName, industry, tone, primaryColor, accentColor, productFile],
+    [brandName, industry, tone, primaryColor, accentColor, productFile, logoFile],
   );
 
   return (
@@ -436,64 +452,136 @@ export default function StudioTestPage() {
             </div>
           </div>
 
-          {/* Right: product upload */}
+          {/* Right: upload boxes (product + logo) + submit */}
           <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-            <div>
-              <label style={S.label}>Product Photo (SACRED — composited as-is)</label>
-              <div
-                onClick={() => fileRef.current?.click()}
-                style={{
-                  border: "2px dashed #2e2e2e",
-                  borderRadius: 12,
-                  padding: productPreview ? "12px" : "44px 24px",
-                  textAlign: "center",
-                  cursor: "pointer",
-                  background: "#141414",
-                  minHeight: 180,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flexDirection: "column",
-                  gap: 12,
-                }}
-              >
-                {productPreview ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={productPreview}
-                    alt="Product preview"
-                    style={{
-                      maxHeight: 200,
-                      maxWidth: "100%",
-                      objectFit: "contain",
-                      borderRadius: 8,
-                    }}
-                  />
-                ) : (
-                  <>
-                    <div style={{ fontSize: 28 }}>📸</div>
-                    <div style={{ color: "#555", fontSize: 13 }}>
-                      Click to upload product photo
-                      <br />
-                      <span style={{ fontSize: 12 }}>
-                        JPEG / PNG / WebP · max 15 MB
-                      </span>
-                    </div>
-                  </>
+
+            {/* Product + logo side-by-side */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+
+              {/* Product photo */}
+              <div>
+                <label style={S.label}>Product Photo ★</label>
+                <div
+                  onClick={() => fileRef.current?.click()}
+                  style={{
+                    border: "2px dashed #2e2e2e",
+                    borderRadius: 12,
+                    padding: productPreview ? "8px" : "28px 12px",
+                    textAlign: "center",
+                    cursor: "pointer",
+                    background: "#141414",
+                    minHeight: 140,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexDirection: "column",
+                    gap: 8,
+                  }}
+                >
+                  {productPreview ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={productPreview}
+                      alt="Product preview"
+                      style={{
+                        maxHeight: 150,
+                        maxWidth: "100%",
+                        objectFit: "contain",
+                        borderRadius: 6,
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 24 }}>📸</div>
+                      <div style={{ color: "#555", fontSize: 12 }}>
+                        Upload product
+                        <br />
+                        <span style={{ fontSize: 11 }}>JPEG/PNG/WebP</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleFileChange}
+                  style={{ display: "none" }}
+                />
+                {productFile && (
+                  <p style={{ color: "#555", fontSize: 11, marginTop: 5 }}>
+                    {productFile.name.slice(0, 20)}{productFile.name.length > 20 ? "…" : ""}{" "}
+                    ({(productFile.size / 1024).toFixed(0)} KB)
+                  </p>
                 )}
               </div>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                onChange={handleFileChange}
-                style={{ display: "none" }}
-              />
-              {productFile && (
-                <p style={{ color: "#555", fontSize: 12, marginTop: 6 }}>
-                  {productFile.name} ({(productFile.size / 1024).toFixed(0)} KB)
-                </p>
-              )}
+
+              {/* Brand logo (optional) */}
+              <div>
+                <label style={S.label}>
+                  Brand Logo{" "}
+                  <span style={{ color: "#444", fontWeight: 400, textTransform: "none" }}>
+                    optional
+                  </span>
+                </label>
+                <div
+                  onClick={() => logoRef.current?.click()}
+                  style={{
+                    border: `2px dashed ${logoPreview ? "#1A7A4A" : "#2e2e2e"}`,
+                    borderRadius: 12,
+                    padding: logoPreview ? "8px" : "28px 12px",
+                    textAlign: "center",
+                    cursor: "pointer",
+                    background: "#141414",
+                    minHeight: 140,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexDirection: "column",
+                    gap: 8,
+                  }}
+                >
+                  {logoPreview ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={logoPreview}
+                      alt="Logo preview"
+                      style={{
+                        maxHeight: 80,
+                        maxWidth: "100%",
+                        objectFit: "contain",
+                        borderRadius: 4,
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 24 }}>🏷️</div>
+                      <div style={{ color: "#555", fontSize: 12 }}>
+                        Upload logo
+                        <br />
+                        <span style={{ fontSize: 11 }}>PNG preferred</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <input
+                  ref={logoRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={handleLogoChange}
+                  style={{ display: "none" }}
+                />
+                {logoFile ? (
+                  <p style={{ color: "#1A7A4A", fontSize: 11, marginTop: 5 }}>
+                    ✓ {logoFile.name.slice(0, 20)}{logoFile.name.length > 20 ? "…" : ""}
+                  </p>
+                ) : (
+                  <p style={{ color: "#444", fontSize: 11, marginTop: 5 }}>
+                    Sacred — overlaid on composited only
+                  </p>
+                )}
+              </div>
+
             </div>
 
             <button
@@ -553,8 +641,18 @@ export default function StudioTestPage() {
                 rel="noopener noreferrer"
                 style={{ color: "#1A7A4A", fontSize: 13, alignSelf: "center" }}
               >
-                Product on Cloudinary ↗
+                Product ↗
               </a>
+              {response.data.logoUrl && (
+                <a
+                  href={response.data.logoUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#1A7A4A", fontSize: 13, alignSelf: "center" }}
+                >
+                  Logo ↗
+                </a>
+              )}
             </div>
 
             {/* Per-model results */}

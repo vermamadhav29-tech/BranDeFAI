@@ -24,6 +24,13 @@ const upload = multer({
   },
 });
 
-router.post("/generate", upload.single("image"), handleStudioTestGenerate);
+router.post(
+  "/generate",
+  upload.fields([
+    { name: "image", maxCount: 1 },
+    { name: "logo",  maxCount: 1 }, // optional — overlaid on composited output only
+  ]),
+  handleStudioTestGenerate,
+);
 
 export default router;

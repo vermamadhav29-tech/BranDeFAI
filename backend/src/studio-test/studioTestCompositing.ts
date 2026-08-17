@@ -81,6 +81,7 @@ export interface TextLayerParams {
 export interface CompositingInput {
   backgroundBuffer: Buffer;
   productBuffer: Buffer;
+  logoBuffer?: Buffer;  // optional — overlaid after main composite, never sent to AI
   text: TextLayerParams;
   log: Logger;
 }
@@ -227,7 +228,7 @@ async function buildTextLayer(p: TextLayerParams, log: Logger): Promise<Buffer> 
 // ─── Main compositing entry point ─────────────────────────────────────────────
 
 export async function compositeStudioImage(input: CompositingInput): Promise<Buffer> {
-  const { backgroundBuffer, productBuffer, text, log } = input;
+  const { backgroundBuffer, productBuffer, logoBuffer, text, log } = input;
 
   ensureFonts(log);
 
@@ -313,6 +314,36 @@ export async function compositeStudioImage(input: CompositingInput): Promise<Buf
     .jpeg({ quality: 92 })
     .toBuffer();
 
-  log(`[compositing] done — ${result.length} bytes`);
+  log(`[compositing] main composite done — ${result.length} bytes`);
+
+  // 7. Optional logo overlay — applied only to composited output, never raw backgrounds.
+  // Placed at bottom-right corner, 12% of canvas width, padding preserved.
+  // PNG transparency is respected via ensureAlpha() + Sharp's 'over' blend.
+  if (logoBuffer) {
+    const LOGO_MAX = Math.round(W * 0.12); // ~130 px
+    const LOGO_PAD = 20;
+
+    const logoResized = await sharp(logoBuffer)
+      .resize({ width: LOGO_MAX, height: LOGO_MAX, fit: "inside" })
+      .ensureAlpha()
+      .toBuffer();
+
+    const lm = await sharp(logoResized).metadata();
+    const lW = lm.width  ?? LOGO_MAX;
+    const lH = lm.height ?? LOGO_MAX;
+
+    // Position: above the bottom bar (H − 92) with LOGO_PAD gap from right/bottom edges
+    const logoLeft = W - lW - LOGO_PAD;
+    const logoTop  = Math.max(0, H - 92 - lH - LOGO_PAD);
+
+    const withLogo = await sharp(result)
+      .composite([{ input: logoResized, left: logoLeft, top: logoTop, blend: "over" }])
+      .jpeg({ quality: 92 })
+      .toBuffer();
+
+    log(`[compositing] logo overlaid ${lW}×${lH} at (${logoLeft},${logoTop}) — ${withLogo.length} bytes`);
+    return withLogo;
+  }
+
   return result;
 }

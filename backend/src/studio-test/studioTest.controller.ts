@@ -320,7 +320,12 @@ export async function handleStudioTestGenerate(
       return;
     }
 
-    if (!req.file) {
+    // req.files is Record<fieldname, File[]> when using upload.fields()
+    const uploadedFiles = req.files as Record<string, Express.Multer.File[]> | undefined;
+    const productFile = uploadedFiles?.["image"]?.[0];
+    const logoFile    = uploadedFiles?.["logo"]?.[0];
+
+    if (!productFile) {
       res.status(400).json({
         success: false,
         data: null,
@@ -329,18 +334,29 @@ export async function handleStudioTestGenerate(
       return;
     }
 
-    const productBuffer = req.file.buffer;
+    const productBuffer = productFile.buffer;
     log(
-      `[studio-test] product received — ${productBuffer.length} bytes, ${req.file.mimetype}`,
+      `[studio-test] product received — ${productBuffer.length} bytes, ${productFile.mimetype}`,
     );
 
-    // ── 2. Upload product to Cloudinary ────────────────────────────────────
+    // ── 2. Upload product (+ optional logo) to Cloudinary ─────────────────
     log("[studio-test] uploading product to Cloudinary...");
     const productImageUrl = await uploadBuf(
       productBuffer,
       "brandefai/studio-test/products",
     );
     log(`[studio-test] product uploaded: ${productImageUrl}`);
+
+    let logoBuffer: Buffer | undefined;
+    let logoUrl: string | undefined;
+    if (logoFile) {
+      log("[studio-test] uploading logo to Cloudinary...");
+      logoUrl = await uploadBuf(logoFile.buffer, "brandefai/studio-test/logos");
+      logoBuffer = logoFile.buffer;
+      log(`[studio-test] logo uploaded: ${logoUrl} (${logoFile.buffer.length} bytes, ${logoFile.mimetype})`);
+    } else {
+      log("[studio-test] no logo provided — overlay step will be skipped");
+    }
 
     // ── 3. Scene prompt ────────────────────────────────────────────────────
     const scenePrompt = buildScenePrompt(industry, tone, brandName);
@@ -410,6 +426,7 @@ export async function handleStudioTestGenerate(
           const compositedBuf = await compositeStudioImage({
             backgroundBuffer: fluxBuf,
             productBuffer,
+            logoBuffer,  // undefined = skip logo overlay
             text: textParams,
             log,
           });
@@ -438,6 +455,7 @@ export async function handleStudioTestGenerate(
           const compositedBuf = await compositeStudioImage({
             backgroundBuffer: ideoBuf,
             productBuffer,
+            logoBuffer,  // undefined = skip logo overlay
             text: textParams,
             log,
           });
@@ -464,6 +482,7 @@ export async function handleStudioTestGenerate(
       success: true,
       data: {
         productImageUrl,
+        logoUrl,          // undefined when no logo was uploaded
         results,
         textParams: textCopy,
         logs,
