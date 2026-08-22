@@ -15,6 +15,7 @@ import {
   compositeStudioImage,
   type TextLayerParams,
 } from "./studioTestCompositing";
+import { removeBackground } from "./backgroundRemoval";
 
 // ─── Logger ───────────────────────────────────────────────────────────────────
 
@@ -334,7 +335,8 @@ export async function handleStudioTestGenerate(
       return;
     }
 
-    const productBuffer = productFile.buffer;
+    // let — will be reassigned to transparent PNG after background removal
+    let productBuffer = productFile.buffer;
     log(
       `[studio-test] product received — ${productBuffer.length} bytes, ${productFile.mimetype}`,
     );
@@ -346,6 +348,26 @@ export async function handleStudioTestGenerate(
       "brandefai/studio-test/products",
     );
     log(`[studio-test] product uploaded: ${productImageUrl}`);
+
+    // ── 2b. Background removal via BiRefNet (men1scus/birefnet) ───────────
+    // Runs once here — model-independent, result is reused for both composites.
+    // On failure: logs the error and falls back to the original photo buffer.
+    let bgRemovalPath: "cutout" | "fallback" = "fallback";
+    try {
+      const cutout = await removeBackground(productImageUrl, log);
+      productBuffer = cutout;
+      bgRemovalPath = "cutout";
+      log(
+        `[studio-test] background removal OK — ${cutout.length} bytes transparent PNG [CUTOUT path]`,
+      );
+    } catch (bgErr) {
+      const msg = bgErr instanceof Error ? bgErr.message : String(bgErr);
+      log(
+        `[studio-test] background removal FAILED: ${msg} — compositing original photo as-is [FALLBACK path]`,
+      );
+      // productBuffer stays as productFile.buffer (original JPEG)
+    }
+    log(`[studio-test] bg removal path: ${bgRemovalPath}`);
 
     let logoBuffer: Buffer | undefined;
     let logoUrl: string | undefined;
@@ -482,7 +504,8 @@ export async function handleStudioTestGenerate(
       success: true,
       data: {
         productImageUrl,
-        logoUrl,          // undefined when no logo was uploaded
+        logoUrl,
+        bgRemovalPath,    // "cutout" | "fallback" — visible in server logs panel
         results,
         textParams: textCopy,
         logs,

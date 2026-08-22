@@ -86,31 +86,6 @@ export interface CompositingInput {
   log: Logger;
 }
 
-// ─── White background removal ─────────────────────────────────────────────────
-// threshold=215 catches JPEG-compressed near-white pixels (JPEG encodes pure
-// white as ~240-252, and compression artifacts can push "background" pixels
-// down to ~220 — 215 is the safe floor that still spares coloured products).
-
-async function removeWhiteBg(buf: Buffer, threshold = 215): Promise<Buffer> {
-  const { data, info } = await sharp(buf)
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  const px = Buffer.from(data);
-  for (let i = 0; i < px.length; i += 4) {
-    if (px[i] > threshold && px[i + 1] > threshold && px[i + 2] > threshold) {
-      px[i + 3] = 0;
-    }
-  }
-
-  return sharp(px, {
-    raw: { width: info.width, height: info.height, channels: 4 },
-  })
-    .png()
-    .toBuffer();
-}
-
 // ─── Canvas helpers ───────────────────────────────────────────────────────────
 
 type Ctx2D = ReturnType<ReturnType<typeof createCanvas>["getContext"]>;
@@ -277,21 +252,13 @@ export async function compositeStudioImage(input: CompositingInput): Promise<Buf
     </svg>`,
   );
 
-  // 3. Product — remove white background
-  // Detection: channel mean > 200 catches dark products on white bg (earrings,
-  // jewellery etc. can pull the full-image mean down to ~210 even on pure white).
-  const stats = await sharp(productBuffer).stats();
-  const isWhiteBg =
-    stats.channels[0].mean > 200 &&
-    stats.channels[1].mean > 200 &&
-    stats.channels[2].mean > 200;
-  const cleanProd = isWhiteBg ? await removeWhiteBg(productBuffer) : productBuffer;
-  log(`[compositing] product whiteBg=${isWhiteBg} (R/G/B means: ${stats.channels.slice(0,3).map(c => c.mean.toFixed(0)).join("/")})`);
-
-  // Cap at 55% of canvas width and 62% of canvas height — preserves aspect ratio
+  // 3. Product — already a transparent RGBA PNG from BiRefNet background removal.
+  //    If bg removal failed upstream, productBuffer is the original photo with
+  //    its background intact — it is composited as-is (fallback path).
+  //    Cap at 55% W × 62% H to leave background scene visible around the product.
   const PW_MAX = Math.round(W * 0.55);
   const PH_MAX = Math.round(H * 0.62);
-  const prodResized = await sharp(cleanProd)
+  const prodResized = await sharp(productBuffer)
     .resize({ width: PW_MAX, height: PH_MAX, fit: "inside" })
     .toBuffer();
   const pm = await sharp(prodResized).metadata();

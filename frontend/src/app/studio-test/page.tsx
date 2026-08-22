@@ -22,6 +22,7 @@ interface ModelResult {
 interface ResponseData {
   productImageUrl: string;
   logoUrl?: string;
+  bgRemovalPath?: "cutout" | "fallback";
   results: ModelResult[];
   textParams: { headline: string; subheadline: string; cta: string };
   logs: string[];
@@ -635,6 +636,32 @@ export default function StudioTestPage() {
               <Meta label="Headline" value={response.data.textParams.headline} />
               <Meta label="Subheadline" value={response.data.textParams.subheadline} />
               <Meta label="CTA" value={response.data.textParams.cta} />
+              {response.data.bgRemovalPath && (
+                <div
+                  style={{
+                    padding: "3px 10px",
+                    borderRadius: 6,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    alignSelf: "center",
+                    background:
+                      response.data.bgRemovalPath === "cutout"
+                        ? "rgba(26,122,74,0.18)"
+                        : "rgba(180,80,0,0.18)",
+                    color:
+                      response.data.bgRemovalPath === "cutout"
+                        ? "#1A7A4A"
+                        : "#cc6600",
+                    border: `1px solid ${response.data.bgRemovalPath === "cutout" ? "#1A7A4A55" : "#cc660055"}`,
+                  }}
+                >
+                  {response.data.bgRemovalPath === "cutout"
+                    ? "BiRefNet cutout"
+                    : "fallback (original)"}
+                </div>
+              )}
               <a
                 href={response.data.productImageUrl}
                 target="_blank"
