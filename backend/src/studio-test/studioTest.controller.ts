@@ -18,6 +18,7 @@ import {
   type TextLayerParams,
 } from "./studioTestCompositing";
 import { removeBackground } from "./backgroundRemoval";
+import { analyzeProduct, type ProductAnalysis } from "./productVision";
 import {
   getIndustryConfig,
   type IndustryConfig,
@@ -198,12 +199,16 @@ function fillSkeleton(skeleton: string, slots: Record<string, string>): string {
 // defaults for slots the studio-test form doesn't collect yet.
 // The skeleton's negative-prompt language is preserved verbatim — that's what
 // suppresses off-brand elements in the generated image.
+// bodyPart: natural-language body part name for the {BODY_PART} prompt slot,
+// e.g. "wrist", "neck", "finger", "ear". Comes from GPT-4o vision analysis;
+// defaults to "wrist" if vision is unavailable.
 function buildTemplateScenePrompt(
   cfg: IndustryConfig,
   template: PromptTemplateVariant,
   brandName: string,
   tone: string,
   primaryColor: string,
+  bodyPart = "wrist",
 ): string {
   const toneWords = tone
     .split(",")
@@ -226,7 +231,7 @@ function buildTemplateScenePrompt(
     BACKDROP:    pickRandom(template.backdropOptions),
     SURFACE:     pickRandom(template.backdropOptions),
     FOCAL_POINT: "the product",
-    BODY_PART:   pickRandom(["wrist", "neck", "hand", "ear"]),
+    BODY_PART:   bodyPart,
     SETTING:     pickRandom(template.backdropOptions),
     GARNISH:     pickRandom(cfg.materialVocab),
     PROPS:       "complementary lifestyle props",
@@ -530,25 +535,42 @@ export async function handleStudioTestGenerate(
     );
     log(`[studio-test] product uploaded: ${productImageUrl}`);
 
-    // ── 2b. Background removal via BiRefNet (men1scus/birefnet) ───────────
-    // Runs once here — model-independent, result is reused for both composites.
-    // On failure: logs the error and falls back to the original photo buffer.
+    // ── 2b. Background removal + vision analysis (parallel) ───────────────
+    // Both are independent operations on the Cloudinary URL — no need to
+    // sequence them. Vision analysis has its own 10s timeout and falls back
+    // gracefully; bg removal falls back to the original photo on any error.
+    log("[studio-test] background removal + vision analysis in parallel…");
+    const [bgSettled, visionSettled] = await Promise.allSettled([
+      removeBackground(productImageUrl, log),
+      analyzeProduct(productImageUrl, log),
+    ]);
+
     let bgRemovalPath: "cutout" | "fallback" = "fallback";
-    try {
-      const cutout = await removeBackground(productImageUrl, log);
-      productBuffer = cutout;
+    if (bgSettled.status === "fulfilled") {
+      productBuffer = bgSettled.value;
       bgRemovalPath = "cutout";
       log(
-        `[studio-test] background removal OK — ${cutout.length} bytes transparent PNG [CUTOUT path]`,
+        `[studio-test] background removal OK — ${productBuffer.length} bytes transparent PNG [CUTOUT path]`,
       );
-    } catch (bgErr) {
-      const msg = bgErr instanceof Error ? bgErr.message : String(bgErr);
+    } else {
+      const msg =
+        bgSettled.reason instanceof Error
+          ? bgSettled.reason.message
+          : String(bgSettled.reason);
       log(
         `[studio-test] background removal FAILED: ${msg} — compositing original photo as-is [FALLBACK path]`,
       );
-      // productBuffer stays as productFile.buffer (original JPEG)
     }
     log(`[studio-test] bg removal path: ${bgRemovalPath}`);
+
+    // Extract vision result (always defined — analyzeProduct never throws).
+    const analysis: ProductAnalysis =
+      visionSettled.status === "fulfilled"
+        ? visionSettled.value
+        : { productType: "other", bodyPart: "neckline", placementNotes: "vision unavailable" };
+    log(
+      `[studio-test] vision — productType=${analysis.productType} bodyPart=${analysis.bodyPart} notes="${analysis.placementNotes}"`,
+    );
 
     let logoBuffer: Buffer | undefined;
     let logoUrl: string | undefined;
@@ -565,6 +587,19 @@ export async function handleStudioTestGenerate(
     let scenePrompt: string;
     let templateId: string | undefined;
 
+    // Map GPT-4o bodyPart enum → natural language for the {BODY_PART} slot.
+    // "neckline" → "neck" because "Close crop on neck" reads more naturally
+    // than "Close crop on neckline" in a camera direction sentence.
+    const BODY_PART_FOR_PROMPT: Record<string, string> = {
+      neckline: "neck",
+      wrist:    "wrist",
+      finger:   "finger",
+      ear:      "ear",
+      none:     "wrist",
+    };
+    const bodyPartForPrompt =
+      BODY_PART_FOR_PROMPT[analysis.bodyPart] ?? "wrist";
+
     const cfg = getIndustryConfig(industry);
     if (cfg) {
       const template = await pickRotatedTemplate(cfg, testSessionId, log);
@@ -575,9 +610,10 @@ export async function handleStudioTestGenerate(
         brandName,
         tone,
         primaryColor || "#1A7A4A",
+        bodyPartForPrompt,
       );
       log(
-        `[template] using id=${templateId} compositionStyle="${template.compositionStyle}"`,
+        `[template] using id=${templateId} compositionStyle="${template.compositionStyle}" bodyPart="${bodyPartForPrompt}"`,
       );
     } else {
       scenePrompt = buildScenePrompt(industry, tone, brandName);
@@ -660,7 +696,8 @@ export async function handleStudioTestGenerate(
           const compositedBuf = await compositeStudioImage({
             backgroundBuffer: fluxBuf,
             productBuffer,
-            logoBuffer,  // undefined = skip logo overlay
+            logoBuffer,
+            productType: analysis.productType,
             text: textParams,
             log,
           });
@@ -689,7 +726,8 @@ export async function handleStudioTestGenerate(
           const compositedBuf = await compositeStudioImage({
             backgroundBuffer: ideoBuf,
             productBuffer,
-            logoBuffer,  // undefined = skip logo overlay
+            logoBuffer,
+            productType: analysis.productType,
             text: textParams,
             log,
           });
@@ -717,10 +755,11 @@ export async function handleStudioTestGenerate(
       data: {
         productImageUrl,
         logoUrl,
-        bgRemovalPath,    // "cutout" | "fallback" — visible in server logs panel
+        bgRemovalPath,
         results,
         textParams: textCopy,
-        templateId,       // which variant was used this generation
+        templateId,
+        productAnalysis: analysis,   // productType + bodyPart + placementNotes
         logs,
       },
       error: null,

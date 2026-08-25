@@ -19,6 +19,12 @@ interface ModelResult {
   compositedUrl: string;
 }
 
+interface ProductAnalysis {
+  productType: string;
+  bodyPart: string;
+  placementNotes: string;
+}
+
 interface ResponseData {
   productImageUrl: string;
   logoUrl?: string;
@@ -26,6 +32,7 @@ interface ResponseData {
   results: ModelResult[];
   textParams: { headline: string; subheadline: string; cta: string };
   templateId?: string;
+  productAnalysis?: ProductAnalysis;
   logs: string[];
 }
 
@@ -643,6 +650,18 @@ export default function StudioTestPage() {
               <Meta label="CTA" value={response.data.textParams.cta} />
               {response.data.templateId && (
                 <Meta label="Template" value={response.data.templateId} />
+              )}
+              {response.data.productAnalysis && (
+                <>
+                  <Meta
+                    label="Product Type"
+                    value={response.data.productAnalysis.productType}
+                  />
+                  <Meta
+                    label="Body Part"
+                    value={response.data.productAnalysis.bodyPart}
+                  />
+                </>
               )}
               {response.data.bgRemovalPath && (
                 <div

@@ -12,6 +12,7 @@ import fs from "fs";
 import sharp from "sharp";
 import type { OverlayOptions } from "sharp";
 import { createCanvas, registerFont } from "canvas";
+import type { JewelleryProductType } from "./productVision";
 
 // ─── Canvas dimensions ────────────────────────────────────────────────────────
 
@@ -93,7 +94,8 @@ export interface TextLayerParams {
 export interface CompositingInput {
   backgroundBuffer: Buffer;
   productBuffer: Buffer;
-  logoBuffer?: Buffer;  // optional — overlaid after main composite, never sent to AI
+  logoBuffer?: Buffer;      // optional — overlaid after main composite, never sent to AI
+  productType?: JewelleryProductType; // drives placement zone for worn_lifestyle shots
   text: TextLayerParams;
   log: Logger;
 }
@@ -259,8 +261,22 @@ async function buildTextLayer(p: TextLayerParams, log: Logger): Promise<Buffer> 
 
 // ─── Main compositing entry point ─────────────────────────────────────────────
 
+// Vertical centre of the product (as a fraction of canvas height) by type.
+// Drives where on the composited image the product sits — critical for
+// worn_lifestyle shots where the AI scene shows a specific body region.
+const PLACEMENT_ZONE: Record<
+  string,
+  { vCentre: number; hShift: number }
+> = {
+  necklace: { vCentre: 0.42, hShift: 0    }, // chest / décolletage area
+  bracelet: { vCentre: 0.65, hShift: 0    }, // foreground lower-frame wrist
+  ring:     { vCentre: 0.65, hShift: 0    }, // same foreground zone as bracelet
+  earrings: { vCentre: 0.32, hShift: 0.08 }, // face-level, slight right offset
+  other:    { vCentre: 0.58, hShift: 0    }, // default centre (unchanged)
+};
+
 export async function compositeStudioImage(input: CompositingInput): Promise<Buffer> {
-  const { backgroundBuffer, productBuffer, logoBuffer, text, log } = input;
+  const { backgroundBuffer, productBuffer, logoBuffer, productType = "other", text, log } = input;
 
   ensureFonts(log);
 
@@ -297,14 +313,15 @@ export async function compositeStudioImage(input: CompositingInput): Promise<Buf
   const PW = pm.width  ?? PW_MAX;
   const PH = pm.height ?? PH_MAX;
 
-  // Center horizontally; vertically target product center at ~58% of canvas,
-  // clamped so it never starts above 22% or clips into the 92px bottom bar.
+  // Product placement — zone varies by product type.
+  // Clamped so the product never starts above 22% or clips the 92px bottom bar.
   const PAD = 28;
-  const prodLeft = Math.round((W - PW) / 2);
+  const zone = PLACEMENT_ZONE[productType] ?? PLACEMENT_ZONE.other;
+  const prodLeft = Math.round((W - PW) / 2 + W * zone.hShift);
   const prodTop = Math.max(
     Math.round(H * 0.22),
     Math.min(
-      Math.round(H * 0.58 - PH / 2),
+      Math.round(H * zone.vCentre - PH / 2),
       H - 92 - PH - 20,
     ),
   );
