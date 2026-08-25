@@ -190,31 +190,49 @@ async function writeTemplateId(
   }
 }
 
-// Builds a background-only scene prompt from the selected template's aesthetic
-// metadata. The real product photo is composited on top separately.
+function fillSkeleton(skeleton: string, slots: Record<string, string>): string {
+  return skeleton.replace(/\{([A-Z_]+)\}/g, (_, key: string) => slots[key] ?? `{${key}}`);
+}
+
+// Fills the industry template's promptSkeleton with form values and sensible
+// defaults for slots the studio-test form doesn't collect yet.
+// The skeleton's negative-prompt language is preserved verbatim — that's what
+// suppresses off-brand elements in the generated image.
 function buildTemplateScenePrompt(
+  cfg: IndustryConfig,
   template: PromptTemplateVariant,
   brandName: string,
   tone: string,
   primaryColor: string,
 ): string {
-  const backdrop = pickRandom(template.backdropOptions);
   const toneWords = tone
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean)
     .join(", ");
-  return [
-    `Luxury commercial product photography background for ${brandName}.`,
-    `Composition style: ${template.compositionStyle}.`,
-    `Lighting: ${template.lightingPreset}.`,
-    `Setting: ${backdrop}.`,
-    `Mood: ${toneWords}.`,
-    `Editorial photography, photorealistic, magazine quality, commercial shoot.`,
-    `Camera: Sony A7R V 85mm f/1.4 lens, shallow depth of field, beautiful bokeh.`,
-    `Color palette: ${primaryColor}.`,
-    `No text, no people, no product objects, no watermarks. Ultra HD 8K.`,
-  ].join(" ");
+
+  // Two distinct picks from materialVocab for MATERIAL and FINISH.
+  const mat1 = pickRandom(cfg.materialVocab);
+  const mat2Pool = cfg.materialVocab.filter((m) => m !== mat1);
+  const mat2 = mat2Pool.length > 0 ? pickRandom(mat2Pool) : mat1;
+
+  const slots: Record<string, string> = {
+    PRODUCT:     "the product as shown in the photo",
+    BRAND_NAME:  brandName,
+    BRAND_TONE:  toneWords,
+    BRAND_HEX:   primaryColor,
+    MATERIAL:    mat1,
+    FINISH:      mat2,
+    BACKDROP:    pickRandom(template.backdropOptions),
+    SURFACE:     pickRandom(template.backdropOptions),
+    FOCAL_POINT: "the product",
+    BODY_PART:   pickRandom(["wrist", "neck", "hand", "ear"]),
+    SETTING:     pickRandom(template.backdropOptions),
+    GARNISH:     pickRandom(cfg.materialVocab),
+    PROPS:       "complementary lifestyle props",
+  };
+
+  return fillSkeleton(template.promptSkeleton, slots);
 }
 
 // ─── Flux 2 Pro (BFL) ────────────────────────────────────────────────────────
@@ -552,6 +570,7 @@ export async function handleStudioTestGenerate(
       const template = await pickRotatedTemplate(cfg, testSessionId, log);
       templateId = template.id;
       scenePrompt = buildTemplateScenePrompt(
+        cfg,
         template,
         brandName,
         tone,
@@ -566,7 +585,7 @@ export async function handleStudioTestGenerate(
         `[studio-test] no industryConfig for "${industry}" — using legacy prompt builder`,
       );
     }
-    log(`[studio-test] prompt: ${scenePrompt.slice(0, 120)}…`);
+    log(`[studio-test] full prompt sent to Flux+Ideogram: ${scenePrompt}`);
 
     // ── 4. Generate Flux + Ideogram in parallel ────────────────────────────
     log("[studio-test] firing Flux + Ideogram in parallel...");
