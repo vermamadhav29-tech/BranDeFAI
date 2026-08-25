@@ -9,7 +9,7 @@
  * own compositing (via studioTestCompositing.ts).
  */
 
-import type { Request, Response } from "express";
+import type { Request, Response as ExpressResponse } from "express";
 import { v2 as cloudinary } from "cloudinary";
 import {
   compositeStudioImage,
@@ -330,7 +330,7 @@ async function generateIdeogram(prompt: string, log: Logger): Promise<Buffer> {
 
 export async function handleStudioTestGenerate(
   req: Request,
-  res: Response,
+  res: ExpressResponse,
 ): Promise<void> {
   const logs: string[] = [];
   const log: Logger = (msg) => {
