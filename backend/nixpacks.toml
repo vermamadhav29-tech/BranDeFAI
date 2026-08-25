@@ -1,5 +1,10 @@
 [phases.setup]
-# Install fonts so librsvg (used by Sharp for SVG rendering) can find them
+# Nix packages (Railway default builder uses Nix)
+nixPkgs = [
+  "liberation_ttf",
+  "dejavu_fonts",
+]
+# apt packages (Debian/Ubuntu builder fallback)
 aptPkgs = [
   "fonts-liberation",
   "fonts-dejavu-core",

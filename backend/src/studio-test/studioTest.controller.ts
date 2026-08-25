@@ -191,7 +191,7 @@ async function generateIdeogram(prompt: string, log: Logger): Promise<Buffer> {
 
   log("[ideogram] submitting to Replicate...");
   const createRes = await fetch(
-    "https://api.replicate.com/v1/models/ideogram-ai/ideogram-v3/predictions",
+    "https://api.replicate.com/v1/models/ideogram-ai/ideogram-v3-turbo/predictions",
     {
       method: "POST",
       headers: {
@@ -206,7 +206,6 @@ async function generateIdeogram(prompt: string, log: Logger): Promise<Buffer> {
             "text, words, letters, logos, watermarks, people, cartoonish, CGI",
           aspect_ratio: "4:5",
           style_type: "REALISTIC",
-          rendering_speed: "TURBO",
           magic_prompt_option: "OFF",
         },
       }),

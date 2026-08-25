@@ -24,18 +24,21 @@ const H = 1350;
 // fallbacks. Whichever file exists first on disk wins.
 
 const FONT_REGULAR_CANDIDATES = [
-  // Bundled alongside compiled JS (add font files here for guaranteed availability)
-  path.resolve(__dirname, "../../assets/fonts/LiberationSans-Regular.ttf"),
-  path.resolve(__dirname, "../assets/fonts/LiberationSans-Regular.ttf"),
-  // nixpacks: fonts-liberation
+  // Bundled in git — primary source; __dirname is dist/studio-test at runtime,
+  // so ../../ resolves to the project root's assets/ alongside dist/
+  path.resolve(__dirname, "../../assets/fonts/NotoSans-Regular.ttf"),
+  // postbuild copy target (dist/assets/fonts/) — second bundled candidate
+  path.resolve(__dirname, "../assets/fonts/NotoSans-Regular.ttf"),
+  // system fallbacks (nixpacks apt or nix)
+  "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
   "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-  // nixpacks: fonts-dejavu-core
   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 ];
 
 const FONT_BOLD_CANDIDATES = [
-  path.resolve(__dirname, "../../assets/fonts/LiberationSans-Bold.ttf"),
-  path.resolve(__dirname, "../assets/fonts/LiberationSans-Bold.ttf"),
+  path.resolve(__dirname, "../../assets/fonts/NotoSans-Bold.ttf"),
+  path.resolve(__dirname, "../assets/fonts/NotoSans-Bold.ttf"),
+  "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
   "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
   "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
 ];
