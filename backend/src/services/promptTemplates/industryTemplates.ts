@@ -15,6 +15,7 @@ export interface PromptTemplateVariant {
   compositionStyle: string; // e.g. "macro studio shot", "flat-lay"
   lightingPreset: string;
   backdropOptions: string[];
+  postType: "lifestyle" | "product_highlight"; // drives template selection by AI-chosen post type
   promptSkeleton: string; // full template string with {SLOT} placeholders
 }
 
@@ -65,6 +66,7 @@ const INDUSTRY_CONFIGS: IndustryConfig[] = [
           "pale grey marble",
           "black velvet",
         ],
+        postType: "product_highlight",
         promptSkeleton:
           "Professional product photograph of {PRODUCT} for {BRAND_NAME}, a {BRAND_TONE} jewellery brand. Material: {MATERIAL}, finish {FINISH}. Studio macro photography, soft diffused key light from upper left, subtle rim light to define edges, {BACKDROP} backdrop. Shallow depth of field, tack-sharp focus on {FOCAL_POINT}. Color palette: {BRAND_HEX}. No text, no logos, no watermarks, no distorted metalwork, no extra gemstones, photorealistic, 4K product photography, editorial jewellery catalogue style.",
       },
@@ -78,6 +80,7 @@ const INDUSTRY_CONFIGS: IndustryConfig[] = [
           "dark slate",
           "raw linen",
         ],
+        postType: "product_highlight",
         promptSkeleton:
           "Professional flat-lay product photograph of {PRODUCT} for {BRAND_NAME}, a {BRAND_TONE} jewellery brand. Shot directly from above (90-degree top-down), arranged on {SURFACE}, soft even studio light with minimal shadow. Material: {MATERIAL}, finish {FINISH}. Color palette: {BRAND_HEX} echoed in surface styling. No text, no logos, no watermarks, no distorted metalwork, photorealistic, 4K editorial flat-lay photography.",
       },
@@ -91,6 +94,7 @@ const INDUSTRY_CONFIGS: IndustryConfig[] = [
           "neutral loft",
           "beige wall",
         ],
+        postType: "lifestyle",
         promptSkeleton:
           "Professional lifestyle photograph of {PRODUCT} being worn, for {BRAND_NAME}, a {BRAND_TONE} jewellery brand. Close crop on {BODY_PART}, natural skin tone, soft golden-hour or diffused window light, shallow depth of field with softly blurred {SETTING} background. Material: {MATERIAL}, finish {FINISH}. Color palette: {BRAND_HEX}. No visible face unless specified, no distorted hands/fingers, no extra jewellery pieces, photorealistic, editorial jewellery campaign style.",
       },
@@ -131,6 +135,7 @@ const INDUSTRY_CONFIGS: IndustryConfig[] = [
           "matte stone grey",
           "warm cream plaster",
         ],
+        postType: "product_highlight",
         promptSkeleton:
           "Professional hero product photograph of {PRODUCT} for {BRAND_NAME}, a {BRAND_TONE} food brand. Plated on {SURFACE}, dramatic directional studio key light from upper left with soft fill to reveal texture, specular highlights on glaze and cream. Three-quarter angle close-up, shallow depth of field, tack-sharp focus on {FOCAL_POINT}. Garnish: {GARNISH}. Color palette: {BRAND_HEX}. No text, no watermarks, no logos, no hands, photorealistic, 4K commercial food photography, editorial patisserie catalogue style.",
       },
@@ -144,6 +149,7 @@ const INDUSTRY_CONFIGS: IndustryConfig[] = [
           "weathered timber",
           "terracotta linen",
         ],
+        postType: "product_highlight",
         promptSkeleton:
           "Professional flat-lay food photograph of {PRODUCT} for {BRAND_NAME}, a {BRAND_TONE} food brand. Shot directly from above (90-degree top-down), arranged on {SURFACE} with complementary ingredients and props, soft even diffused studio light with minimal hard shadows. Garnish: {GARNISH}. Color palette: {BRAND_HEX} echoed in surface and prop styling. No text, no watermarks, no logos, photorealistic, 4K editorial flat-lay food photography, styled by professional food stylist.",
       },
@@ -158,6 +164,7 @@ const INDUSTRY_CONFIGS: IndustryConfig[] = [
           "rustic wooden dining table",
           "marble brunch spread",
         ],
+        postType: "lifestyle",
         promptSkeleton:
           "Professional lifestyle food photograph of {PRODUCT} for {BRAND_NAME}, a {BRAND_TONE} food brand. Scene set on {SURFACE} in a {SETTING}, warm natural window light from one side, complementary tableware and {PROPS}, softly blurred background. Garnish: {GARNISH}. Color palette: {BRAND_HEX}. No faces, no text, no watermarks, no logos, photorealistic, 4K editorial lifestyle food photography, aspirational café or home-entertaining aesthetic.",
       },
@@ -196,6 +203,7 @@ const INDUSTRY_CONFIGS: IndustryConfig[] = [
           "warm off-white",
           "soft nude",
         ],
+        postType: "product_highlight",
         promptSkeleton:
           "Professional studio product photograph of {PRODUCT} for {BRAND_NAME}, a {BRAND_TONE} lifestyle brand. Positioned on {SURFACE}, three-point studio lighting — bright key light, soft fill, clean rim light to separate from {BACKDROP} backdrop. Material: {MATERIAL}, finish {FINISH}. Tack-sharp full-product focus. Color palette: {BRAND_HEX}. No text, no watermarks, no logos, no extra objects, photorealistic, 4K commercial product photography, Scandinavian minimalist editorial style.",
       },
@@ -209,6 +217,7 @@ const INDUSTRY_CONFIGS: IndustryConfig[] = [
           "natural oak surface",
           "terracotta plaster",
         ],
+        postType: "product_highlight",
         promptSkeleton:
           "Professional flat-lay product photograph of {PRODUCT} for {BRAND_NAME}, a {BRAND_TONE} lifestyle brand. Shot directly from above (90-degree top-down), arranged on {SURFACE} alongside complementary {PROPS} that reflect the brand world, soft even diffused studio light with minimal hard shadows. Material: {MATERIAL}, finish {FINISH}. Color palette: {BRAND_HEX} echoed in prop and surface selection. No text, no watermarks, no logos, photorealistic, 4K editorial flat-lay, clean lifestyle-brand aesthetic.",
       },
@@ -222,6 +231,7 @@ const INDUSTRY_CONFIGS: IndustryConfig[] = [
           "outdoor café terrace",
           "coworking space",
         ],
+        postType: "lifestyle",
         promptSkeleton:
           "Professional lifestyle photograph of {PRODUCT} in use, for {BRAND_NAME}, a {BRAND_TONE} lifestyle brand. Photographed in a {SETTING}, natural ambient light, shallow depth of field with softly blurred background, product as the clear hero. Material: {MATERIAL}, finish {FINISH}. Color palette: {BRAND_HEX} complemented by environment tones. No visible faces unless specified, no cluttered backgrounds, no distorted objects, photorealistic, 4K editorial lifestyle photography, aspirational {BRAND_TONE} campaign aesthetic.",
       },

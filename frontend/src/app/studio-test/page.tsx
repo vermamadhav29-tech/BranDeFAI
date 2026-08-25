@@ -19,10 +19,16 @@ interface ModelResult {
   compositedUrl: string;
 }
 
-interface ProductAnalysis {
-  productType: string;
-  bodyPart: string;
+interface CreativeAnalysis {
+  productType:    string;
+  bodyPart:       string;
   placementNotes: string;
+  postType:       "lifestyle" | "product_highlight";
+  storyAngle:     string;
+  headline:       string;
+  subheadline:    string;
+  cta:            string;
+  trustBullets:   string[];
 }
 
 interface ResponseData {
@@ -32,7 +38,7 @@ interface ResponseData {
   results: ModelResult[];
   textParams: { headline: string; subheadline: string; cta: string };
   templateId?: string;
-  productAnalysis?: ProductAnalysis;
+  creativeAnalysis?: CreativeAnalysis;
   logs: string[];
 }
 
@@ -651,16 +657,18 @@ export default function StudioTestPage() {
               {response.data.templateId && (
                 <Meta label="Template" value={response.data.templateId} />
               )}
-              {response.data.productAnalysis && (
+              {response.data.creativeAnalysis && (
                 <>
-                  <Meta
-                    label="Product Type"
-                    value={response.data.productAnalysis.productType}
-                  />
-                  <Meta
-                    label="Body Part"
-                    value={response.data.productAnalysis.bodyPart}
-                  />
+                  <Meta label="Post Type"    value={response.data.creativeAnalysis.postType} />
+                  <Meta label="Story Angle"  value={response.data.creativeAnalysis.storyAngle} />
+                  <Meta label="Product Type" value={response.data.creativeAnalysis.productType} />
+                  <Meta label="Body Part"    value={response.data.creativeAnalysis.bodyPart} />
+                  {response.data.creativeAnalysis.trustBullets.length > 0 && (
+                    <Meta
+                      label="Trust Bullets"
+                      value={response.data.creativeAnalysis.trustBullets.join(" · ")}
+                    />
+                  )}
                 </>
               )}
               {response.data.bgRemovalPath && (

@@ -18,7 +18,12 @@ import {
   type TextLayerParams,
 } from "./studioTestCompositing";
 import { removeBackground } from "./backgroundRemoval";
-import { analyzeProduct, type ProductAnalysis } from "./productVision";
+import {
+  analyzeCreative,
+  type CreativeAnalysis,
+  type PostType,
+  CREATIVE_FALLBACK,
+} from "./productVision";
 import {
   getIndustryConfig,
   type IndustryConfig,
@@ -54,7 +59,7 @@ async function uploadBuf(buf: Buffer, folder: string): Promise<string> {
   });
 }
 
-// ─── Prompt builder ───────────────────────────────────────────────────────────
+// ─── Prompt builder (legacy fallback — used only when no industryConfig found) ─
 
 const SETTINGS: Record<string, string> = {
   jewellery:
@@ -87,36 +92,6 @@ function buildScenePrompt(
   ].join(" ");
 }
 
-function buildTextCopy(
-  brandName: string,
-  industry: string,
-  tone: string,
-): Pick<TextLayerParams, "headline" | "subheadline" | "cta"> {
-  const toneWord =
-    tone
-      .split(",")[0]
-      ?.trim()
-      .replace(/^\w/, (c) => c.toUpperCase()) ?? "Premium";
-
-  if (industry === "jewellery")
-    return {
-      headline: "Crafted to Last",
-      subheadline: `${toneWord} jewellery for every precious moment`,
-      cta: "Shop Now",
-    };
-  if (industry === "food_desserts")
-    return {
-      headline: "Taste the Difference",
-      subheadline: `${toneWord} flavours, made with love`,
-      cta: "Order Now",
-    };
-  return {
-    headline: `Live ${toneWord}`,
-    subheadline: `Discover the ${brandName} collection`,
-    cta: "Explore Now",
-  };
-}
-
 // ─── Template rotation (Redis-backed) ────────────────────────────────────────
 // Uses the shared Redis instance (REDIS_URL) to track lastTemplateId per
 // testSessionId. All errors are swallowed — rotation degrades gracefully to
@@ -143,6 +118,7 @@ function pickRandom<T>(arr: readonly T[]): T {
 async function pickRotatedTemplate(
   cfg: IndustryConfig,
   testSessionId: string,
+  postType: PostType,
   log: Logger,
 ): Promise<PromptTemplateVariant> {
   const redisKey = `lastTemplateId:${testSessionId}`;
@@ -159,12 +135,20 @@ async function pickRotatedTemplate(
     );
   }
 
-  // Exclude the last-used template so composition style rotates each call.
-  // If only one template exists (or all are the last-used), fall back to full pool.
+  // Filter to templates matching the AI-chosen post type first.
+  // A lifestyle story must not land on a flat-lay; a product highlight must not
+  // land on a worn_lifestyle. Fall back to full pool only if data gaps exist.
+  const matchingType = cfg.templates.filter((t) => t.postType === postType);
+  const typePool = matchingType.length > 0 ? matchingType : cfg.templates;
+  log(
+    `[template] postType=${postType} → ${typePool.length} candidate(s) before rotation filter`,
+  );
+
+  // Within the type-filtered pool, exclude the last-used template so variants rotate.
   const candidates = lastId
-    ? cfg.templates.filter((t) => t.id !== lastId)
-    : cfg.templates;
-  const pool = candidates.length > 0 ? candidates : cfg.templates;
+    ? typePool.filter((t) => t.id !== lastId)
+    : typePool;
+  const pool = candidates.length > 0 ? candidates : typePool;
   return pickRandom(pool);
 }
 
@@ -560,14 +544,20 @@ export async function handleStudioTestGenerate(
     );
     log(`[studio-test] product uploaded: ${productImageUrl}`);
 
-    // ── 2b. Background removal + vision analysis (parallel) ───────────────
+    // ── 2b. Background removal + Creative Director analysis (parallel) ───────
     // Both are independent operations on the Cloudinary URL — no need to
-    // sequence them. Vision analysis has its own 10s timeout and falls back
+    // sequence them. analyzeCreative has its own 15s timeout and falls back
     // gracefully; bg removal falls back to the original photo on any error.
-    log("[studio-test] background removal + vision analysis in parallel…");
-    const [bgSettled, visionSettled] = await Promise.allSettled([
+    log("[studio-test] background removal + creative analysis in parallel…");
+    const [bgSettled, creativeSettled] = await Promise.allSettled([
       removeBackground(productImageUrl, log),
-      analyzeProduct(productImageUrl, log),
+      analyzeCreative({
+        imageUrl:  productImageUrl,
+        brandName,
+        brandTone: tone.split(",").map((s) => s.trim()).filter(Boolean),
+        brandHex:  [primaryColor, accentColor].filter((c): c is string => Boolean(c)),
+        log,
+      }),
     ]);
 
     let bgRemovalPath: "cutout" | "fallback" = "fallback";
@@ -588,13 +578,13 @@ export async function handleStudioTestGenerate(
     }
     log(`[studio-test] bg removal path: ${bgRemovalPath}`);
 
-    // Extract vision result (always defined — analyzeProduct never throws).
-    const analysis: ProductAnalysis =
-      visionSettled.status === "fulfilled"
-        ? visionSettled.value
-        : { productType: "other", bodyPart: "neckline", placementNotes: "vision unavailable" };
+    // Extract creative analysis (always defined — analyzeCreative never throws).
+    const analysis: CreativeAnalysis =
+      creativeSettled.status === "fulfilled"
+        ? creativeSettled.value
+        : { ...CREATIVE_FALLBACK, placementNotes: "creative analysis unavailable" };
     log(
-      `[studio-test] vision — productType=${analysis.productType} bodyPart=${analysis.bodyPart} notes="${analysis.placementNotes}"`,
+      `[studio-test] creative — productType=${analysis.productType} bodyPart=${analysis.bodyPart} postType=${analysis.postType} headline="${analysis.headline}"`,
     );
 
     let logoBuffer: Buffer | undefined;
@@ -628,7 +618,7 @@ export async function handleStudioTestGenerate(
 
     const cfg = getIndustryConfig(industry);
     if (cfg) {
-      const template = await pickRotatedTemplate(cfg, testSessionId, log);
+      const template = await pickRotatedTemplate(cfg, testSessionId, analysis.postType, log);
       templateId = template.id;
       ({ prompt: scenePrompt, negativeExtra: sceneNegativeExtra } = buildTemplateScenePrompt(
         cfg,
@@ -690,15 +680,18 @@ export async function handleStudioTestGenerate(
       return;
     }
 
-    // ── 5. Text copy ───────────────────────────────────────────────────────
-    const textCopy = buildTextCopy(brandName, industry, tone);
+    // ── 5. Text copy (from Creative Director analysis) ──────────────────────
     const textParams: TextLayerParams = {
       brandName,
-      ...textCopy,
+      headline:     analysis.headline,
+      subheadline:  analysis.subheadline,
+      cta:          analysis.cta,
       primaryColor: primaryColor || "#1A7A4A",
-      accentColor: accentColor || "#FFD700",
+      accentColor:  accentColor  || "#FFD700",
     };
-    log(`[studio-test] headline="${textCopy.headline}" cta="${textCopy.cta}"`);
+    log(`[studio-test] copy — headline="${analysis.headline}" subheadline="${analysis.subheadline}" cta="${analysis.cta}"`);
+    log(`[studio-test] storyAngle="${analysis.storyAngle}" postType="${analysis.postType}"`);
+    log(`[studio-test] trustBullets: ${JSON.stringify(analysis.trustBullets)}`);
 
     // ── 6. Upload raw + composite each model result ────────────────────────
     type ModelResult = {
@@ -785,9 +778,13 @@ export async function handleStudioTestGenerate(
         logoUrl,
         bgRemovalPath,
         results,
-        textParams: textCopy,
+        textParams: {
+          headline:    analysis.headline,
+          subheadline: analysis.subheadline,
+          cta:         analysis.cta,
+        },
         templateId,
-        productAnalysis: analysis,   // productType + bodyPart + placementNotes
+        creativeAnalysis: analysis,  // full result: classification + copy + trustBullets
         logs,
       },
       error: null,
