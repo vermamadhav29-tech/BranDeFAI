@@ -195,13 +195,21 @@ function fillSkeleton(skeleton: string, slots: Record<string, string>): string {
   return skeleton.replace(/\{([A-Z_]+)\}/g, (_, key: string) => slots[key] ?? `{${key}}`);
 }
 
+// Explicit "bare limb" phrases for the {BODY_PART} slot in worn_lifestyle skeletons.
+// These tell the model what IS in frame — positive instruction — rather than relying
+// solely on negative prompts to suppress ghost jewellery layered under the real product.
+const BARE_LIMB_PHRASES: Record<string, string> = {
+  wrist:  "a bare wrist and forearm, completely unadorned, no bracelet, no watch, no jewellery of any kind",
+  neck:   "a bare neckline and collarbone, completely unadorned, no necklace, no pendant, no chain",
+  finger: "a bare hand with unadorned fingers, no rings",
+  ear:    "a bare ear, clearly visible, no earrings, hair pulled back or tucked",
+};
+
 // Fills the industry template's promptSkeleton with form values and sensible
 // defaults for slots the studio-test form doesn't collect yet.
-// The skeleton's negative-prompt language is preserved verbatim — that's what
-// suppresses off-brand elements in the generated image.
-// bodyPart: natural-language body part name for the {BODY_PART} prompt slot,
-// e.g. "wrist", "neck", "finger", "ear". Comes from GPT-4o vision analysis;
-// defaults to "wrist" if vision is unavailable.
+// Returns { prompt, negativeExtra } — negativeExtra is set only for worn_lifestyle,
+// where a strengthened negative prompt is appended to both generators to suppress
+// ghost jewellery that negative-prompt-only approaches fail to eliminate.
 function buildTemplateScenePrompt(
   cfg: IndustryConfig,
   template: PromptTemplateVariant,
@@ -209,7 +217,7 @@ function buildTemplateScenePrompt(
   tone: string,
   primaryColor: string,
   bodyPart = "wrist",
-): string {
+): { prompt: string; negativeExtra?: string } {
   const toneWords = tone
     .split(",")
     .map((s) => s.trim())
@@ -231,20 +239,34 @@ function buildTemplateScenePrompt(
     BACKDROP:    pickRandom(template.backdropOptions),
     SURFACE:     pickRandom(template.backdropOptions),
     FOCAL_POINT: "the product",
-    BODY_PART:   bodyPart,
+    BODY_PART:   BARE_LIMB_PHRASES[bodyPart] ?? bodyPart,
     SETTING:     pickRandom(template.backdropOptions),
     GARNISH:     pickRandom(cfg.materialVocab),
     PROPS:       "complementary lifestyle props",
   };
 
-  return fillSkeleton(template.promptSkeleton, slots);
+  const prompt = fillSkeleton(template.promptSkeleton, slots);
+
+  // Strengthen the negative prompt only for worn_lifestyle — studio_macro and
+  // flatlay have no body in frame so extra jewellery negatives are irrelevant there.
+  const negativeExtra =
+    template.id === "worn_lifestyle"
+      ? "no jewelry, no bracelet, no necklace, no ring, no earrings, no watch, no accessories on body"
+      : undefined;
+
+  return { prompt, negativeExtra };
 }
 
 // ─── Flux 2 Pro (BFL) ────────────────────────────────────────────────────────
 
-async function generateFlux(prompt: string, log: Logger): Promise<Buffer> {
+async function generateFlux(prompt: string, negativeExtra: string | undefined, log: Logger): Promise<Buffer> {
   const key = process.env.BFL_API_KEY;
   if (!key) throw new Error("BFL_API_KEY not set");
+
+  const fluxNeg = [
+    "text, letters, words, logos, watermarks, people, CGI, 3D render, distorted, blurry",
+    ...(negativeExtra ? [negativeExtra] : []),
+  ].join(", ");
 
   log("[flux] submitting job...");
   const submitRes = await fetch("https://api.bfl.ai/v1/flux-pro-1.1", {
@@ -252,8 +274,7 @@ async function generateFlux(prompt: string, log: Logger): Promise<Buffer> {
     headers: { "x-key": key, "Content-Type": "application/json" },
     body: JSON.stringify({
       prompt,
-      negative_prompt:
-        "text, letters, words, logos, watermarks, people, CGI, 3D render, distorted, blurry",
+      negative_prompt: fluxNeg,
       width: 1024,
       height: 1280,
       output_format: "jpeg",
@@ -354,15 +375,19 @@ async function submitWithRetry429(
 
 // ─── Ideogram v3 (Replicate) ─────────────────────────────────────────────────
 
-async function generateIdeogram(prompt: string, log: Logger): Promise<Buffer> {
+async function generateIdeogram(prompt: string, negativeExtra: string | undefined, log: Logger): Promise<Buffer> {
   const token = process.env.REPLICATE_API_TOKEN;
   if (!token) throw new Error("REPLICATE_API_TOKEN not set");
+
+  const ideogramNeg = [
+    "text, words, letters, logos, watermarks, people, cartoonish, CGI",
+    ...(negativeExtra ? [negativeExtra] : []),
+  ].join(", ");
 
   const ideogramPayload = {
     input: {
       prompt,
-      negative_prompt:
-        "text, words, letters, logos, watermarks, people, cartoonish, CGI",
+      negative_prompt: ideogramNeg,
       aspect_ratio: "4:5",
       style_type: "Realistic",      // accepted values: None Auto General Realistic Design
       magic_prompt_option: "Off",   // accepted values: Auto On Off
@@ -585,6 +610,7 @@ export async function handleStudioTestGenerate(
 
     // ── 3. Scene prompt (template rotation) ───────────────────────────────
     let scenePrompt: string;
+    let sceneNegativeExtra: string | undefined;
     let templateId: string | undefined;
 
     // Map GPT-4o bodyPart enum → natural language for the {BODY_PART} slot.
@@ -604,14 +630,14 @@ export async function handleStudioTestGenerate(
     if (cfg) {
       const template = await pickRotatedTemplate(cfg, testSessionId, log);
       templateId = template.id;
-      scenePrompt = buildTemplateScenePrompt(
+      ({ prompt: scenePrompt, negativeExtra: sceneNegativeExtra } = buildTemplateScenePrompt(
         cfg,
         template,
         brandName,
         tone,
         primaryColor || "#1A7A4A",
         bodyPartForPrompt,
-      );
+      ));
       log(
         `[template] using id=${templateId} compositionStyle="${template.compositionStyle}" bodyPart="${bodyPartForPrompt}"`,
       );
@@ -622,12 +648,14 @@ export async function handleStudioTestGenerate(
       );
     }
     log(`[studio-test] full prompt sent to Flux+Ideogram: ${scenePrompt}`);
+    log(`[studio-test] negative extra: ${sceneNegativeExtra ?? "(none)"}`);
+
 
     // ── 4. Generate Flux + Ideogram in parallel ────────────────────────────
     log("[studio-test] firing Flux + Ideogram in parallel...");
     const [fluxSettled, ideogramSettled] = await Promise.allSettled([
-      generateFlux(scenePrompt, log),
-      generateIdeogram(scenePrompt, log),
+      generateFlux(scenePrompt, sceneNegativeExtra, log),
+      generateIdeogram(scenePrompt, sceneNegativeExtra, log),
     ]);
 
     if (fluxSettled.status === "rejected")
