@@ -41,6 +41,9 @@ const FONT_BOLD_CANDIDATES = [
 ];
 
 let _fontsLoaded = false;
+// Stores whichever path actually registered — readable in every buildTextLayer call.
+let _resolvedFontNormal = "(not yet registered)";
+let _resolvedFontBold   = "(not yet registered)";
 
 function ensureFonts(log: Logger): void {
   if (_fontsLoaded) return;
@@ -48,17 +51,23 @@ function ensureFonts(log: Logger): void {
 
   const tryRegister = (candidates: string[], weight: string) => {
     for (const fp of candidates) {
-      if (fs.existsSync(fp)) {
+      const exists = fs.existsSync(fp);
+      log(`[compositing/font] weight=${weight} candidate=${fp} exists=${exists}`);
+      if (exists) {
         try {
           registerFont(fp, { family: "StudioFont", weight });
-          log(`[compositing] font registered weight=${weight}: ${fp}`);
+          log(`[compositing/font] REGISTERED weight=${weight}: ${fp}`);
+          if (weight === "normal") _resolvedFontNormal = fp;
+          else                     _resolvedFontBold   = fp;
           return;
         } catch (e) {
-          log(`[compositing] registerFont failed for ${fp}: ${String(e)}`);
+          log(`[compositing/font] registerFont THREW for ${fp}: ${String(e)}`);
         }
       }
     }
-    log(`[compositing] WARNING no font file found for weight=${weight}; canvas will fall back to system sans-serif`);
+    log(`[compositing/font] WARNING — no candidate found for weight=${weight}; canvas falls back to system sans-serif`);
+    if (weight === "normal") _resolvedFontNormal = "NONE — system fallback";
+    else                     _resolvedFontBold   = "NONE — system fallback";
   };
 
   tryRegister(FONT_REGULAR_CANDIDATES, "normal");
@@ -148,29 +157,47 @@ async function buildDropShadow(prodBuf: Buffer, blur = 22): Promise<Buffer> {
     .toBuffer();
 }
 
+// ─── Diagnostic helper ────────────────────────────────────────────────────────
+// Dumps a string as human-readable text PLUS U+XXXX codepoints so we can see
+// whether the string itself is garbled (encoding issue) or the font lacks glyphs.
+
+function diagStr(s: string): string {
+  const cps = [...s]
+    .map((c) => `U+${(c.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`)
+    .join(" ");
+  return `"${s}" [${cps}]`;
+}
+
 // ─── Text canvas layer ────────────────────────────────────────────────────────
 
 async function buildTextLayer(p: TextLayerParams, log: Logger): Promise<Buffer> {
+  // ── DIAGNOSTIC: which font paths were resolved ────────────────────────────
+  log(`[compositing/diag] font-normal resolved path: ${_resolvedFontNormal}`);
+  log(`[compositing/diag] font-bold  resolved path: ${_resolvedFontBold}`);
+
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
   const font = (size: number, weight = "normal") =>
     `${weight} ${size}px StudioFont, sans-serif`;
 
   // Brand name (top-left)
+  const brandStr = p.brandName.toUpperCase();
+  log(`[compositing/diag] DRAW brand-name: ${diagStr(brandStr)}`);
   ctx.font = font(22, "bold");
   ctx.fillStyle = "rgba(255,255,255,0.90)";
-  ctx.fillText(p.brandName.toUpperCase(), 44, 66);
-  log("[compositing] text: brand name");
+  ctx.fillText(brandStr, 44, 66);
 
   // Headline — word-wrap at 940px
   ctx.font = font(66, "bold");
   ctx.fillStyle = "#FFFFFF";
+  log(`[compositing/diag] DRAW headline (raw): ${diagStr(p.headline)}`);
   const headWords = p.headline.split(" ");
   let lineStr = "";
   let lineY = 445;
   for (const word of headWords) {
     const test = lineStr ? `${lineStr} ${word}` : word;
     if (ctx.measureText(test).width > 940 && lineStr) {
+      log(`[compositing/diag] DRAW headline line: ${diagStr(lineStr)}`);
       ctx.fillText(lineStr, 44, lineY);
       lineStr = word;
       lineY += 80;
@@ -179,12 +206,13 @@ async function buildTextLayer(p: TextLayerParams, log: Logger): Promise<Buffer> 
     }
   }
   if (lineStr) {
+    log(`[compositing/diag] DRAW headline line: ${diagStr(lineStr)}`);
     ctx.fillText(lineStr, 44, lineY);
     lineY += 80;
   }
-  log(`[compositing] text: headline (endY=${lineY})`);
 
   // Subheadline
+  log(`[compositing/diag] DRAW subheadline: ${diagStr(p.subheadline)}`);
   ctx.font = font(23);
   ctx.fillStyle = "rgba(255,255,255,0.78)";
   ctx.fillText(p.subheadline, 44, lineY + 12);
@@ -212,6 +240,7 @@ async function buildTextLayer(p: TextLayerParams, log: Logger): Promise<Buffer> 
   ctx.fillStyle = "#FFFFFF";
   ctx.fill();
 
+  log(`[compositing/diag] DRAW cta: ${diagStr(p.cta)}`);
   ctx.font = font(15, "bold");
   ctx.fillStyle = p.primaryColor;
   ctx.textAlign = "center";
@@ -221,7 +250,7 @@ async function buildTextLayer(p: TextLayerParams, log: Logger): Promise<Buffer> 
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
 
-  log("[compositing] text: CTA drawn");
+  log("[compositing] text layer drawn — check /diag lines above for strings and font paths");
   return canvas.toBuffer("image/png");
 }
 
