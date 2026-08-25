@@ -25,6 +25,7 @@ interface ResponseData {
   bgRemovalPath?: "cutout" | "fallback";
   results: ModelResult[];
   textParams: { headline: string; subheadline: string; cta: string };
+  templateId?: string;
   logs: string[];
 }
 
@@ -253,6 +254,9 @@ export default function StudioTestPage() {
 
   const fileRef = useRef<HTMLInputElement>(null);
   const logoRef = useRef<HTMLInputElement>(null);
+  // Stable per page-mount — drives template rotation on the backend so
+  // repeated generates from the same form session pick different variants.
+  const testSessionId = useRef(crypto.randomUUID()).current;
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -281,11 +285,12 @@ export default function StudioTestPage() {
 
       try {
         const form = new FormData();
-        form.append("brandName",    brandName.trim());
-        form.append("industry",     industry);
-        form.append("tone",         tone.trim());
-        form.append("primaryColor", primaryColor);
-        form.append("accentColor",  accentColor);
+        form.append("brandName",     brandName.trim());
+        form.append("industry",      industry);
+        form.append("tone",          tone.trim());
+        form.append("primaryColor",  primaryColor);
+        form.append("accentColor",   accentColor);
+        form.append("testSessionId", testSessionId);
         form.append("image", productFile, productFile.name);
         // Logo is optional — backend skips overlay step if absent
         if (logoFile) form.append("logo", logoFile, logoFile.name);
@@ -636,6 +641,9 @@ export default function StudioTestPage() {
               <Meta label="Headline" value={response.data.textParams.headline} />
               <Meta label="Subheadline" value={response.data.textParams.subheadline} />
               <Meta label="CTA" value={response.data.textParams.cta} />
+              {response.data.templateId && (
+                <Meta label="Template" value={response.data.templateId} />
+              )}
               {response.data.bgRemovalPath && (
                 <div
                   style={{

@@ -9,13 +9,20 @@
  * own compositing (via studioTestCompositing.ts).
  */
 
+import { randomUUID } from "crypto";
 import type { Request, Response as ExpressResponse } from "express";
 import { v2 as cloudinary } from "cloudinary";
+import Redis from "ioredis";
 import {
   compositeStudioImage,
   type TextLayerParams,
 } from "./studioTestCompositing";
 import { removeBackground } from "./backgroundRemoval";
+import {
+  getIndustryConfig,
+  type IndustryConfig,
+  type PromptTemplateVariant,
+} from "../services/promptTemplates/industryTemplates";
 
 // ─── Logger ───────────────────────────────────────────────────────────────────
 
@@ -107,6 +114,107 @@ function buildTextCopy(
     subheadline: `Discover the ${brandName} collection`,
     cta: "Explore Now",
   };
+}
+
+// ─── Template rotation (Redis-backed) ────────────────────────────────────────
+// Uses the shared Redis instance (REDIS_URL) to track lastTemplateId per
+// testSessionId. All errors are swallowed — rotation degrades gracefully to
+// random selection if Redis is unavailable.
+
+let _redis: Redis | null = null;
+function getRedis(): Redis {
+  if (!_redis) {
+    const url = process.env.REDIS_URL;
+    if (!url) throw new Error("REDIS_URL not set");
+    _redis = new Redis(url, {
+      maxRetriesPerRequest: 2,
+      enableReadyCheck: false,
+      lazyConnect: true,
+    });
+  }
+  return _redis;
+}
+
+function pickRandom<T>(arr: readonly T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+async function pickRotatedTemplate(
+  cfg: IndustryConfig,
+  testSessionId: string,
+  log: Logger,
+): Promise<PromptTemplateVariant> {
+  const redisKey = `lastTemplateId:${testSessionId}`;
+  let lastId: string | null = null;
+
+  try {
+    lastId = await getRedis().get(redisKey);
+    log(
+      `[template] session=${testSessionId.slice(0, 8)}… lastTemplateId=${lastId ?? "none"}`,
+    );
+  } catch (err) {
+    log(
+      `[template] Redis read failed (${err instanceof Error ? err.message : String(err)}) — picking randomly`,
+    );
+  }
+
+  // Exclude the last-used template so composition style rotates each call.
+  // If only one template exists (or all are the last-used), fall back to full pool.
+  const candidates = lastId
+    ? cfg.templates.filter((t) => t.id !== lastId)
+    : cfg.templates;
+  const pool = candidates.length > 0 ? candidates : cfg.templates;
+  return pickRandom(pool);
+}
+
+async function writeTemplateId(
+  testSessionId: string,
+  templateId: string,
+  log: Logger,
+): Promise<void> {
+  try {
+    // 24-hour TTL — test sessions don't need indefinite persistence.
+    await getRedis().set(
+      `lastTemplateId:${testSessionId}`,
+      templateId,
+      "EX",
+      86400,
+    );
+    log(
+      `[template] wrote lastTemplateId=${templateId} (session=${testSessionId.slice(0, 8)}…)`,
+    );
+  } catch (err) {
+    log(
+      `[template] Redis write failed (${err instanceof Error ? err.message : String(err)}) — rotation state not persisted`,
+    );
+  }
+}
+
+// Builds a background-only scene prompt from the selected template's aesthetic
+// metadata. The real product photo is composited on top separately.
+function buildTemplateScenePrompt(
+  template: PromptTemplateVariant,
+  brandName: string,
+  tone: string,
+  primaryColor: string,
+): string {
+  const backdrop = pickRandom(template.backdropOptions);
+  const toneWords = tone
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join(", ");
+  return [
+    `Luxury commercial product photography background for ${brandName}.`,
+    `Composition style: ${template.compositionStyle}.`,
+    `Lighting: ${template.lightingPreset}.`,
+    `Setting: ${backdrop}.`,
+    `Mood: ${toneWords}.`,
+    `Editorial photography, photorealistic, magazine quality, commercial shoot.`,
+    `Camera: Sony A7R V 85mm f/1.4 lens, shallow depth of field, beautiful bokeh.`,
+    `Color palette: ${primaryColor}.`,
+    `No text, no people, no product objects, no watermarks. Ultra HD 8K.`,
+  ].join(" ");
 }
 
 // ─── Flux 2 Pro (BFL) ────────────────────────────────────────────────────────
@@ -347,14 +455,25 @@ export async function handleStudioTestGenerate(
     log(`[studio-test] START ${new Date().toISOString()}`);
 
     // ── 1. Validate inputs ─────────────────────────────────────────────────
-    const { brandName, industry, tone, primaryColor, accentColor } =
-      req.body as {
-        brandName?: string;
-        industry?: string;
-        tone?: string;
-        primaryColor?: string;
-        accentColor?: string;
-      };
+    const {
+      brandName,
+      industry,
+      tone,
+      primaryColor,
+      accentColor,
+      testSessionId: rawSessionId,
+    } = req.body as {
+      brandName?: string;
+      industry?: string;
+      tone?: string;
+      primaryColor?: string;
+      accentColor?: string;
+      testSessionId?: string;
+    };
+
+    // testSessionId drives template rotation — generate one if the client
+    // didn't send it (e.g. direct curl tests).
+    const testSessionId = rawSessionId?.trim() || randomUUID();
 
     if (!brandName?.trim() || !industry?.trim() || !tone?.trim()) {
       res.status(400).json({
@@ -424,9 +543,30 @@ export async function handleStudioTestGenerate(
       log("[studio-test] no logo provided — overlay step will be skipped");
     }
 
-    // ── 3. Scene prompt ────────────────────────────────────────────────────
-    const scenePrompt = buildScenePrompt(industry, tone, brandName);
-    log(`[studio-test] prompt: ${scenePrompt.slice(0, 90)}…`);
+    // ── 3. Scene prompt (template rotation) ───────────────────────────────
+    let scenePrompt: string;
+    let templateId: string | undefined;
+
+    const cfg = getIndustryConfig(industry);
+    if (cfg) {
+      const template = await pickRotatedTemplate(cfg, testSessionId, log);
+      templateId = template.id;
+      scenePrompt = buildTemplateScenePrompt(
+        template,
+        brandName,
+        tone,
+        primaryColor || "#1A7A4A",
+      );
+      log(
+        `[template] using id=${templateId} compositionStyle="${template.compositionStyle}"`,
+      );
+    } else {
+      scenePrompt = buildScenePrompt(industry, tone, brandName);
+      log(
+        `[studio-test] no industryConfig for "${industry}" — using legacy prompt builder`,
+      );
+    }
+    log(`[studio-test] prompt: ${scenePrompt.slice(0, 120)}…`);
 
     // ── 4. Generate Flux + Ideogram in parallel ────────────────────────────
     log("[studio-test] firing Flux + Ideogram in parallel...");
@@ -445,6 +585,15 @@ export async function handleStudioTestGenerate(
       log(
         `[studio-test] Ideogram OK — ${ideogramSettled.value.length} bytes`,
       );
+
+    // Write rotation state only when at least one model succeeded.
+    if (
+      templateId &&
+      (fluxSettled.status === "fulfilled" ||
+        ideogramSettled.status === "fulfilled")
+    ) {
+      await writeTemplateId(testSessionId, templateId, log);
+    }
 
     if (
       fluxSettled.status === "rejected" &&
@@ -552,6 +701,7 @@ export async function handleStudioTestGenerate(
         bgRemovalPath,    // "cutout" | "fallback" — visible in server logs panel
         results,
         textParams: textCopy,
+        templateId,       // which variant was used this generation
         logs,
       },
       error: null,
