@@ -264,7 +264,7 @@ async function generateIdeogram(prompt: string, log: Logger): Promise<Buffer> {
     id: string;
     status: string;
     urls?: { get: string };
-    output?: unknown[];
+    output?: unknown;   // may be string | string[] | {url:string}[] depending on model version
     error?: string;
   };
 
@@ -303,20 +303,24 @@ async function generateIdeogram(prompt: string, log: Logger): Promise<Buffer> {
   if (prediction.status !== "succeeded")
     throw new Error("Ideogram: timed out");
 
-  // output may be string[] or {url:string}[]
+  // Log the raw output so its shape is visible in the server logs panel.
+  log(`[ideogram] raw output: ${JSON.stringify(prediction.output)}`);
+
+  // Parse whichever shape Replicate actually returns for this model.
+  // Ideogram v3-turbo returns a plain string URL (confirmed by log above).
   let imageUrl: string | undefined;
   const output = prediction.output;
-  if (Array.isArray(output) && output.length > 0) {
+  if (typeof output === "string" && output.length > 0) {
+    // plain string — most common for newer Replicate model deployments
+    imageUrl = output;
+  } else if (Array.isArray(output) && output.length > 0) {
+    // array variant — kept as fallback in case the model changes
     const first = output[0];
     if (typeof first === "string") imageUrl = first;
-    else if (
-      typeof first === "object" &&
-      first !== null &&
-      "url" in first
-    )
+    else if (typeof first === "object" && first !== null && "url" in first)
       imageUrl = (first as { url: string }).url;
   }
-  if (!imageUrl) throw new Error("Ideogram: no image URL in output");
+  if (!imageUrl) throw new Error(`Ideogram: no image URL in output — shape was: ${JSON.stringify(output)}`);
 
   log(`[ideogram] image URL: ${imageUrl}`);
   const imgRes = await fetch(imageUrl);
