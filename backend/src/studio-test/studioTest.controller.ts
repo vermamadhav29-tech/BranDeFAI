@@ -227,7 +227,17 @@ async function generateIdeogram(prompt: string, log: Logger): Promise<Buffer> {
   const token = process.env.REPLICATE_API_TOKEN;
   if (!token) throw new Error("REPLICATE_API_TOKEN not set");
 
-  log("[ideogram] submitting to Replicate...");
+  const ideogramPayload = {
+    input: {
+      prompt,
+      negative_prompt:
+        "text, words, letters, logos, watermarks, people, cartoonish, CGI",
+      aspect_ratio: "4:5",
+      style_type: "Realistic",      // accepted values: None Auto General Realistic Design
+      magic_prompt_option: "Off",   // accepted values: Auto On Off
+    },
+  };
+  log(`[ideogram] payload: ${JSON.stringify(ideogramPayload.input)}`);
   const createRes = await submitWithRetry429(
     "https://api.replicate.com/v1/models/ideogram-ai/ideogram-v3-turbo/predictions",
     {
@@ -237,16 +247,7 @@ async function generateIdeogram(prompt: string, log: Logger): Promise<Buffer> {
         "Content-Type": "application/json",
         Prefer: "wait=5",
       },
-      body: JSON.stringify({
-        input: {
-          prompt,
-          negative_prompt:
-            "text, words, letters, logos, watermarks, people, cartoonish, CGI",
-          aspect_ratio: "4:5",
-          style_type: "REALISTIC",
-          magic_prompt_option: "OFF",
-        },
-      }),
+      body: JSON.stringify(ideogramPayload),
     },
     log,
     "[ideogram]",
