@@ -183,6 +183,44 @@ async function generateFlux(prompt: string, log: Logger): Promise<Buffer> {
   throw new Error("Flux: timed out after 140s of polling");
 }
 
+// ─── 429-aware submission helper (Replicate only) ────────────────────────────
+// Retries a POST up to 2 times on HTTP 429, honouring Replicate's retry_after.
+// Non-429 responses are returned as-is so existing error handling is unchanged.
+// Throws after MAX_RETRIES exhausted → falls through to each caller's fallback.
+
+async function submitWithRetry429(
+  url: string,
+  init: RequestInit,
+  log: Logger,
+  tag: string,
+): Promise<Response> {
+  const MAX_RETRIES = 2;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch(url, init);
+    if (res.status !== 429) return res;
+
+    let waitSec = 5;
+    try {
+      const body = (await res.json()) as { retry_after?: number };
+      if (typeof body.retry_after === "number") waitSec = body.retry_after;
+    } catch (_e) {
+      // body not JSON or no retry_after field — keep 5s default
+    }
+
+    if (attempt === MAX_RETRIES) {
+      throw new Error(
+        `${tag} HTTP 429 — rate-limited, ${MAX_RETRIES} retries exhausted`,
+      );
+    }
+    const delay = waitSec + 0.5;
+    log(
+      `${tag} HTTP 429 — retry ${attempt + 1}/${MAX_RETRIES} in ${delay}s (retry_after=${waitSec}s)`,
+    );
+    await new Promise((r) => setTimeout(r, delay * 1_000));
+  }
+  throw new Error(`${tag} submitWithRetry429: unreachable`);
+}
+
 // ─── Ideogram v3 (Replicate) ─────────────────────────────────────────────────
 
 async function generateIdeogram(prompt: string, log: Logger): Promise<Buffer> {
@@ -190,7 +228,7 @@ async function generateIdeogram(prompt: string, log: Logger): Promise<Buffer> {
   if (!token) throw new Error("REPLICATE_API_TOKEN not set");
 
   log("[ideogram] submitting to Replicate...");
-  const createRes = await fetch(
+  const createRes = await submitWithRetry429(
     "https://api.replicate.com/v1/models/ideogram-ai/ideogram-v3-turbo/predictions",
     {
       method: "POST",
@@ -210,6 +248,8 @@ async function generateIdeogram(prompt: string, log: Logger): Promise<Buffer> {
         },
       }),
     },
+    log,
+    "[ideogram]",
   );
 
   if (!createRes.ok) {

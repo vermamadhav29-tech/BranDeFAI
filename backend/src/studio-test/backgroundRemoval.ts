@@ -32,6 +32,42 @@ type Prediction = {
   error?: string;
 };
 
+// Retries a POST up to 2 times on HTTP 429, honouring Replicate's retry_after.
+// Returns the Response for any non-429 status so existing error handling is
+// unchanged. Throws (→ fallback) only when retries are exhausted.
+async function submitWithRetry429(
+  url: string,
+  init: RequestInit,
+  log: Logger,
+  tag: string,
+): Promise<Response> {
+  const MAX_RETRIES = 2;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch(url, init);
+    if (res.status !== 429) return res;
+
+    let waitSec = 5;
+    try {
+      const body = (await res.json()) as { retry_after?: number };
+      if (typeof body.retry_after === "number") waitSec = body.retry_after;
+    } catch (_e) {
+      // body not JSON or no retry_after field — keep 5s default
+    }
+
+    if (attempt === MAX_RETRIES) {
+      throw new Error(
+        `${tag} HTTP 429 — rate-limited, ${MAX_RETRIES} retries exhausted`,
+      );
+    }
+    const delay = waitSec + 0.5;
+    log(
+      `${tag} HTTP 429 — retry ${attempt + 1}/${MAX_RETRIES} in ${delay}s (retry_after=${waitSec}s)`,
+    );
+    await new Promise((r) => setTimeout(r, delay * 1_000));
+  }
+  throw new Error(`${tag} submitWithRetry429: unreachable`);
+}
+
 export async function removeBackground(
   imageUrl: string,
   log: Logger,
@@ -44,18 +80,23 @@ export async function removeBackground(
     `[bgremoval] submitting to BiRefNet (men1scus/birefnet v${BIREFNET_VERSION.slice(0, 8)}…)`,
   );
 
-  const createRes = await fetch("https://api.replicate.com/v1/predictions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      Prefer: "wait=5", // get result inline if it finishes within 5 s
+  const createRes = await submitWithRetry429(
+    "https://api.replicate.com/v1/predictions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Prefer: "wait=5",
+      },
+      body: JSON.stringify({
+        version: BIREFNET_VERSION,
+        input: { image: imageUrl },
+      }),
     },
-    body: JSON.stringify({
-      version: BIREFNET_VERSION,
-      input: { image: imageUrl },
-    }),
-  });
+    log,
+    "[bgremoval]",
+  );
 
   if (!createRes.ok) {
     const txt = await createRes.text().catch(() => "");
