@@ -169,7 +169,7 @@ function Spinner({ stage }: { stage: string }) {
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       <p style={{ margin: 0, fontWeight: 600, color: "#aaa" }}>{stage}</p>
       <p style={{ margin: "8px 0 0", fontSize: 13 }}>
-        ~15–25 seconds — BiRefNet cutout + GPT-4o copy running in parallel
+        60–90 seconds — deep product inspection → creative brief → compositing
       </p>
     </div>
   );
@@ -238,7 +238,7 @@ export default function StudioTestPage() {
         // Logo is optional — backend shows brand initials if absent
         if (logoFile) form.append("logo", logoFile, logoFile.name);
 
-        setStage("Removing background + generating copy in parallel…");
+        setStage("Stage 1: Inspecting product image in detail… (45s)");
 
         const res = await fetch(`${API_BASE}/api/studio-test/generate`, {
           method: "POST",
