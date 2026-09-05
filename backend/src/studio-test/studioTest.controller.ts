@@ -2,21 +2,18 @@
  * studioTest.controller.ts
  *
  * Fully self-contained handler for POST /api/studio-test/generate.
- * Imports NOTHING from the existing service pipeline — no autoCreative,
- * no creativeBrief, no existing upload helpers, no Brand DNA lookup.
+ * Imports NOTHING from the existing service pipeline.
  *
- * Own Cloudinary upload, own Flux polling, own Ideogram/Replicate polling,
- * own compositing (via studioTestCompositing.ts).
+ * Pipeline (no AI image generation):
+ *   BiRefNet cutout (foreground) + original photo blurred (backdrop)
+ *   + GPT-4o creative analysis + Sharp text/logo overlays → 1080×1080 JPEG.
  */
 
 import { randomUUID } from "crypto";
 import type { Request, Response as ExpressResponse } from "express";
 import { v2 as cloudinary } from "cloudinary";
 import Redis from "ioredis";
-import {
-  compositeStudioImage,
-  type TextLayerParams,
-} from "./studioTestCompositing";
+import { buildPromoPost } from "./studioTestPromo";
 import { removeBackground } from "./backgroundRemoval";
 import {
   analyzeCreative,
@@ -39,7 +36,7 @@ type Logger = (msg: string) => void;
 function cfgCloudinary() {
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
+    api_key:    process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
   });
 }
@@ -50,7 +47,7 @@ async function uploadBuf(buf: Buffer, folder: string): Promise<string> {
     const stream = cloudinary.uploader.upload_stream(
       { folder, resource_type: "image" },
       (err, result) => {
-        if (err) return reject(new Error(`Cloudinary error: ${err.message}`));
+        if (err)     return reject(new Error(`Cloudinary error: ${err.message}`));
         if (!result) return reject(new Error("Cloudinary returned no result"));
         resolve(result.secure_url);
       },
@@ -59,43 +56,7 @@ async function uploadBuf(buf: Buffer, folder: string): Promise<string> {
   });
 }
 
-// ─── Prompt builder (legacy fallback — used only when no industryConfig found) ─
-
-const SETTINGS: Record<string, string> = {
-  jewellery:
-    "elegant marble and velvet jewellery display surface, deep jewel-toned background with golden accents, dramatic directional studio lighting",
-  food_desserts:
-    "warm rustic cafe counter with wooden textures and linen, morning light streaming in, artisan pastry and greenery display, bokeh",
-  lifestyle:
-    "clean minimalist interior studio space, neutral warm tones, natural daylight, Scandinavian aesthetic",
-};
-
-function buildScenePrompt(
-  industry: string,
-  tone: string,
-  brandName: string,
-): string {
-  const toneWords = tone
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .join(", ");
-  const setting = SETTINGS[industry] ?? SETTINGS.lifestyle;
-  return [
-    `Luxury commercial product photography background for ${brandName}.`,
-    `Setting: ${setting}.`,
-    `Mood: ${toneWords}.`,
-    `Style: ${toneWords} editorial photography, photorealistic, magazine quality, commercial shoot.`,
-    `Camera: Sony A7R V 85mm f/1.4 lens, shallow depth of field, beautiful bokeh.`,
-    `Lighting: professional studio three-point lighting with soft natural fill.`,
-    `No text, no people, no product objects, no watermarks. Ultra HD 8K.`,
-  ].join(" ");
-}
-
 // ─── Template rotation (Redis-backed) ────────────────────────────────────────
-// Uses the shared Redis instance (REDIS_URL) to track lastTemplateId per
-// testSessionId. All errors are swallowed — rotation degrades gracefully to
-// random selection if Redis is unavailable.
 
 let _redis: Redis | null = null;
 function getRedis(): Redis {
@@ -104,8 +65,8 @@ function getRedis(): Redis {
     if (!url) throw new Error("REDIS_URL not set");
     _redis = new Redis(url, {
       maxRetriesPerRequest: 2,
-      enableReadyCheck: false,
-      lazyConnect: true,
+      enableReadyCheck:     false,
+      lazyConnect:          true,
     });
   }
   return _redis;
@@ -116,359 +77,43 @@ function pickRandom<T>(arr: readonly T[]): T {
 }
 
 async function pickRotatedTemplate(
-  cfg: IndustryConfig,
+  cfg:           IndustryConfig,
   testSessionId: string,
-  postType: PostType,
-  log: Logger,
+  postType:      PostType,
+  log:           Logger,
 ): Promise<PromptTemplateVariant> {
   const redisKey = `lastTemplateId:${testSessionId}`;
   let lastId: string | null = null;
 
   try {
     lastId = await getRedis().get(redisKey);
-    log(
-      `[template] session=${testSessionId.slice(0, 8)}… lastTemplateId=${lastId ?? "none"}`,
-    );
+    log(`[template] session=${testSessionId.slice(0, 8)}… lastTemplateId=${lastId ?? "none"}`);
   } catch (err) {
-    log(
-      `[template] Redis read failed (${err instanceof Error ? err.message : String(err)}) — picking randomly`,
-    );
+    log(`[template] Redis read failed (${err instanceof Error ? err.message : String(err)}) — picking randomly`);
   }
 
-  // Filter to templates matching the AI-chosen post type first.
-  // A lifestyle story must not land on a flat-lay; a product highlight must not
-  // land on a worn_lifestyle. Fall back to full pool only if data gaps exist.
+  // Filter to templates matching the AI-chosen post type; fall back to full pool.
   const matchingType = cfg.templates.filter((t) => t.postType === postType);
-  const typePool = matchingType.length > 0 ? matchingType : cfg.templates;
-  log(
-    `[template] postType=${postType} → ${typePool.length} candidate(s) before rotation filter`,
-  );
+  const typePool     = matchingType.length > 0 ? matchingType : cfg.templates;
+  log(`[template] postType=${postType} → ${typePool.length} candidate(s) before rotation filter`);
 
-  // Within the type-filtered pool, exclude the last-used template so variants rotate.
-  const candidates = lastId
-    ? typePool.filter((t) => t.id !== lastId)
-    : typePool;
+  const candidates = lastId ? typePool.filter((t) => t.id !== lastId) : typePool;
   const pool = candidates.length > 0 ? candidates : typePool;
   return pickRandom(pool);
 }
 
 async function writeTemplateId(
   testSessionId: string,
-  templateId: string,
-  log: Logger,
+  templateId:    string,
+  log:           Logger,
 ): Promise<void> {
   try {
     // 24-hour TTL — test sessions don't need indefinite persistence.
-    await getRedis().set(
-      `lastTemplateId:${testSessionId}`,
-      templateId,
-      "EX",
-      86400,
-    );
-    log(
-      `[template] wrote lastTemplateId=${templateId} (session=${testSessionId.slice(0, 8)}…)`,
-    );
+    await getRedis().set(`lastTemplateId:${testSessionId}`, templateId, "EX", 86400);
+    log(`[template] wrote lastTemplateId=${templateId} (session=${testSessionId.slice(0, 8)}…)`);
   } catch (err) {
-    log(
-      `[template] Redis write failed (${err instanceof Error ? err.message : String(err)}) — rotation state not persisted`,
-    );
+    log(`[template] Redis write failed (${err instanceof Error ? err.message : String(err)}) — rotation state not persisted`);
   }
-}
-
-function fillSkeleton(skeleton: string, slots: Record<string, string>): string {
-  return skeleton.replace(/\{([A-Z_]+)\}/g, (_, key: string) => slots[key] ?? `{${key}}`);
-}
-
-// Explicit "bare limb" phrases for the {BODY_PART} slot in worn_lifestyle skeletons.
-// These tell the model what IS in frame — positive instruction — rather than relying
-// solely on negative prompts to suppress ghost jewellery layered under the real product.
-const BARE_LIMB_PHRASES: Record<string, string> = {
-  wrist:  "a bare wrist and forearm, completely unadorned, no bracelet, no watch, no jewellery of any kind",
-  neck:   "a bare neckline and collarbone, completely unadorned, no necklace, no pendant, no chain",
-  finger: "a bare hand with unadorned fingers, no rings",
-  ear:    "a bare ear, clearly visible, no earrings, hair pulled back or tucked",
-};
-
-// Fills the industry template's promptSkeleton with form values and sensible
-// defaults for slots the studio-test form doesn't collect yet.
-// Returns { prompt, negativeExtra } — negativeExtra is set only for worn_lifestyle,
-// where a strengthened negative prompt is appended to both generators to suppress
-// ghost jewellery that negative-prompt-only approaches fail to eliminate.
-function buildTemplateScenePrompt(
-  cfg: IndustryConfig,
-  template: PromptTemplateVariant,
-  brandName: string,
-  tone: string,
-  primaryColor: string,
-  bodyPart = "wrist",
-): { prompt: string; negativeExtra?: string } {
-  const toneWords = tone
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .join(", ");
-
-  // Two distinct picks from materialVocab for MATERIAL and FINISH.
-  const mat1 = pickRandom(cfg.materialVocab);
-  const mat2Pool = cfg.materialVocab.filter((m) => m !== mat1);
-  const mat2 = mat2Pool.length > 0 ? pickRandom(mat2Pool) : mat1;
-
-  const slots: Record<string, string> = {
-    PRODUCT:     "the product as shown in the photo",
-    BRAND_NAME:  brandName,
-    BRAND_TONE:  toneWords,
-    BRAND_HEX:   primaryColor,
-    MATERIAL:    mat1,
-    FINISH:      mat2,
-    BACKDROP:    pickRandom(template.backdropOptions),
-    SURFACE:     pickRandom(template.backdropOptions),
-    FOCAL_POINT: "the product",
-    BODY_PART:   BARE_LIMB_PHRASES[bodyPart] ?? bodyPart,
-    SETTING:     pickRandom(template.backdropOptions),
-    GARNISH:     pickRandom(cfg.materialVocab),
-    PROPS:       "complementary lifestyle props",
-  };
-
-  const prompt = fillSkeleton(template.promptSkeleton, slots);
-
-  // Strengthen the negative prompt only for worn_lifestyle — studio_macro and
-  // flatlay have no body in frame so extra jewellery negatives are irrelevant there.
-  const negativeExtra =
-    template.id === "worn_lifestyle"
-      ? "no jewelry, no bracelet, no necklace, no ring, no earrings, no watch, no accessories on body"
-      : undefined;
-
-  return { prompt, negativeExtra };
-}
-
-// ─── Flux 2 Pro (BFL) ────────────────────────────────────────────────────────
-
-async function generateFlux(prompt: string, negativeExtra: string | undefined, log: Logger): Promise<Buffer> {
-  const key = process.env.BFL_API_KEY;
-  if (!key) throw new Error("BFL_API_KEY not set");
-
-  const fluxNeg = [
-    "text, letters, words, logos, watermarks, people, CGI, 3D render, distorted, blurry",
-    ...(negativeExtra ? [negativeExtra] : []),
-  ].join(", ");
-
-  log("[flux] submitting job...");
-  const submitRes = await fetch("https://api.bfl.ai/v1/flux-pro-1.1", {
-    method: "POST",
-    headers: { "x-key": key, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      negative_prompt: fluxNeg,
-      width: 1024,
-      height: 1280,
-      output_format: "jpeg",
-      safety_tolerance: 2,
-    }),
-  });
-
-  if (!submitRes.ok) {
-    const txt = await submitRes.text().catch(() => "");
-    throw new Error(
-      `Flux submit HTTP ${submitRes.status}: ${txt.slice(0, 300)}`,
-    );
-  }
-
-  const submitData = (await submitRes.json()) as {
-    id?: string;
-    polling_url?: string;
-  };
-  if (!submitData.id) throw new Error("Flux: no job id returned");
-
-  const pollUrl =
-    submitData.polling_url ??
-    `https://api.bfl.ai/v1/get_result?id=${submitData.id}`;
-  log(`[flux] polling: ${pollUrl}`);
-
-  for (let attempt = 1; attempt <= 70; attempt++) {
-    await new Promise((r) => setTimeout(r, 2000));
-    const pollRes = await fetch(pollUrl, {
-      headers: { "x-key": key, "Content-Type": "application/json" },
-    });
-    if (!pollRes.ok)
-      throw new Error(`Flux poll HTTP ${pollRes.status}`);
-
-    const d = (await pollRes.json()) as {
-      status: string;
-      result?: { sample?: string };
-    };
-    log(`[flux] attempt=${attempt} status=${d.status}`);
-
-    if (d.status === "Ready") {
-      const url = d.result?.sample;
-      if (!url) throw new Error("Flux: ready but no sample URL");
-      const imgRes = await fetch(url);
-      if (!imgRes.ok)
-        throw new Error(`Flux: download HTTP ${imgRes.status}`);
-      const buf = Buffer.from(await imgRes.arrayBuffer());
-      log(`[flux] image ready — ${buf.length} bytes`);
-      return buf;
-    }
-
-    if (
-      ["Error", "Request Moderated", "Content Moderated"].includes(d.status)
-    ) {
-      throw new Error(`Flux job failed with status: ${d.status}`);
-    }
-  }
-
-  throw new Error("Flux: timed out after 140s of polling");
-}
-
-// ─── 429-aware submission helper (Replicate only) ────────────────────────────
-// Retries a POST up to 2 times on HTTP 429, honouring Replicate's retry_after.
-// Non-429 responses are returned as-is so existing error handling is unchanged.
-// Throws after MAX_RETRIES exhausted → falls through to each caller's fallback.
-
-async function submitWithRetry429(
-  url: string,
-  init: RequestInit,
-  log: Logger,
-  tag: string,
-): Promise<Response> {
-  const MAX_RETRIES = 2;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const res = await fetch(url, init);
-    if (res.status !== 429) return res;
-
-    let waitSec = 5;
-    try {
-      const body = (await res.json()) as { retry_after?: number };
-      if (typeof body.retry_after === "number") waitSec = body.retry_after;
-    } catch (_e) {
-      // body not JSON or no retry_after field — keep 5s default
-    }
-
-    if (attempt === MAX_RETRIES) {
-      throw new Error(
-        `${tag} HTTP 429 — rate-limited, ${MAX_RETRIES} retries exhausted`,
-      );
-    }
-    const delay = waitSec + 0.5;
-    log(
-      `${tag} HTTP 429 — retry ${attempt + 1}/${MAX_RETRIES} in ${delay}s (retry_after=${waitSec}s)`,
-    );
-    await new Promise((r) => setTimeout(r, delay * 1_000));
-  }
-  throw new Error(`${tag} submitWithRetry429: unreachable`);
-}
-
-// ─── Ideogram v3 (Replicate) ─────────────────────────────────────────────────
-
-async function generateIdeogram(prompt: string, negativeExtra: string | undefined, log: Logger): Promise<Buffer> {
-  const token = process.env.REPLICATE_API_TOKEN;
-  if (!token) throw new Error("REPLICATE_API_TOKEN not set");
-
-  const ideogramNeg = [
-    "text, words, letters, logos, watermarks, people, cartoonish, CGI",
-    ...(negativeExtra ? [negativeExtra] : []),
-  ].join(", ");
-
-  const ideogramPayload = {
-    input: {
-      prompt,
-      negative_prompt: ideogramNeg,
-      aspect_ratio: "4:5",
-      style_type: "Realistic",      // accepted values: None Auto General Realistic Design
-      magic_prompt_option: "Off",   // accepted values: Auto On Off
-    },
-  };
-  log(`[ideogram] payload: ${JSON.stringify(ideogramPayload.input)}`);
-  const createRes = await submitWithRetry429(
-    "https://api.replicate.com/v1/models/ideogram-ai/ideogram-v3-turbo/predictions",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Prefer: "wait=5",
-      },
-      body: JSON.stringify(ideogramPayload),
-    },
-    log,
-    "[ideogram]",
-  );
-
-  if (!createRes.ok) {
-    const txt = await createRes.text().catch(() => "");
-    throw new Error(
-      `Ideogram submit HTTP ${createRes.status}: ${txt.slice(0, 300)}`,
-    );
-  }
-
-  type PredictionShape = {
-    id: string;
-    status: string;
-    urls?: { get: string };
-    output?: unknown;   // may be string | string[] | {url:string}[] depending on model version
-    error?: string;
-  };
-
-  let prediction = (await createRes.json()) as PredictionShape;
-  log(
-    `[ideogram] prediction id=${prediction.id} status=${prediction.status}`,
-  );
-
-  const getUrl =
-    prediction.urls?.get ??
-    `https://api.replicate.com/v1/predictions/${prediction.id}`;
-
-  for (let attempt = 1; attempt <= 70; attempt++) {
-    if (prediction.status === "succeeded") break;
-    if (
-      prediction.status === "failed" ||
-      prediction.status === "canceled"
-    ) {
-      throw new Error(
-        `Ideogram prediction ${prediction.status}: ${prediction.error ?? "unknown"}`,
-      );
-    }
-
-    await new Promise((r) => setTimeout(r, 2000));
-    const pollRes = await fetch(getUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!pollRes.ok)
-      throw new Error(`Ideogram poll HTTP ${pollRes.status}`);
-    prediction = (await pollRes.json()) as PredictionShape;
-    log(
-      `[ideogram] attempt=${attempt} status=${prediction.status}`,
-    );
-  }
-
-  if (prediction.status !== "succeeded")
-    throw new Error("Ideogram: timed out");
-
-  // Log the raw output so its shape is visible in the server logs panel.
-  log(`[ideogram] raw output: ${JSON.stringify(prediction.output)}`);
-
-  // Parse whichever shape Replicate actually returns for this model.
-  // Ideogram v3-turbo returns a plain string URL (confirmed by log above).
-  let imageUrl: string | undefined;
-  const output = prediction.output;
-  if (typeof output === "string" && output.length > 0) {
-    // plain string — most common for newer Replicate model deployments
-    imageUrl = output;
-  } else if (Array.isArray(output) && output.length > 0) {
-    // array variant — kept as fallback in case the model changes
-    const first = output[0];
-    if (typeof first === "string") imageUrl = first;
-    else if (typeof first === "object" && first !== null && "url" in first)
-      imageUrl = (first as { url: string }).url;
-  }
-  if (!imageUrl) throw new Error(`Ideogram: no image URL in output — shape was: ${JSON.stringify(output)}`);
-
-  log(`[ideogram] image URL: ${imageUrl}`);
-  const imgRes = await fetch(imageUrl);
-  if (!imgRes.ok)
-    throw new Error(`Ideogram: download HTTP ${imgRes.status}`);
-  const buf = Buffer.from(await imgRes.arrayBuffer());
-  log(`[ideogram] image ready — ${buf.length} bytes`);
-  return buf;
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -478,10 +123,7 @@ export async function handleStudioTestGenerate(
   res: ExpressResponse,
 ): Promise<void> {
   const logs: string[] = [];
-  const log: Logger = (msg) => {
-    console.log(msg);
-    logs.push(msg);
-  };
+  const log: Logger = (msg) => { console.log(msg); logs.push(msg); };
 
   try {
     log(`[studio-test] START ${new Date().toISOString()}`);
@@ -493,61 +135,50 @@ export async function handleStudioTestGenerate(
       tone,
       primaryColor,
       accentColor,
+      brandTagline: rawTagline,
       testSessionId: rawSessionId,
     } = req.body as {
-      brandName?: string;
-      industry?: string;
-      tone?: string;
+      brandName?:    string;
+      industry?:     string;
+      tone?:         string;
       primaryColor?: string;
-      accentColor?: string;
+      accentColor?:  string;
+      brandTagline?: string;
       testSessionId?: string;
     };
 
-    // testSessionId drives template rotation — generate one if the client
-    // didn't send it (e.g. direct curl tests).
     const testSessionId = rawSessionId?.trim() || randomUUID();
+    const brandTagline  = rawTagline?.trim()   || "";
 
     if (!brandName?.trim() || !industry?.trim() || !tone?.trim()) {
       res.status(400).json({
-        success: false,
-        data: null,
+        success: false, data: null,
         error: "brandName, industry, and tone are required",
       });
       return;
     }
 
-    // req.files is Record<fieldname, File[]> when using upload.fields()
     const uploadedFiles = req.files as Record<string, Express.Multer.File[]> | undefined;
-    const productFile = uploadedFiles?.["image"]?.[0];
-    const logoFile    = uploadedFiles?.["logo"]?.[0];
+    const productFile   = uploadedFiles?.["image"]?.[0];
+    const logoFile      = uploadedFiles?.["logo"]?.[0];
 
     if (!productFile) {
       res.status(400).json({
-        success: false,
-        data: null,
+        success: false, data: null,
         error: "Product image file is required",
       });
       return;
     }
 
-    // let — will be reassigned to transparent PNG after background removal
-    let productBuffer = productFile.buffer;
-    log(
-      `[studio-test] product received — ${productBuffer.length} bytes, ${productFile.mimetype}`,
-    );
+    const originalBuffer = productFile.buffer;
+    log(`[studio-test] product received — ${originalBuffer.length} bytes, ${productFile.mimetype}`);
 
-    // ── 2. Upload product (+ optional logo) to Cloudinary ─────────────────
+    // ── 2. Upload product to Cloudinary ───────────────────────────────────
     log("[studio-test] uploading product to Cloudinary...");
-    const productImageUrl = await uploadBuf(
-      productBuffer,
-      "brandefai/studio-test/products",
-    );
+    const productImageUrl = await uploadBuf(originalBuffer, "brandefai/studio-test/products");
     log(`[studio-test] product uploaded: ${productImageUrl}`);
 
-    // ── 2b. Background removal + Creative Director analysis (parallel) ───────
-    // Both are independent operations on the Cloudinary URL — no need to
-    // sequence them. analyzeCreative has its own 15s timeout and falls back
-    // gracefully; bg removal falls back to the original photo on any error.
+    // ── 3. BG removal + Creative Director in parallel ─────────────────────
     log("[studio-test] background removal + creative analysis in parallel…");
     const [bgSettled, creativeSettled] = await Promise.allSettled([
       removeBackground(productImageUrl, log),
@@ -561,215 +192,75 @@ export async function handleStudioTestGenerate(
     ]);
 
     let bgRemovalPath: "cutout" | "fallback" = "fallback";
-    if (bgSettled.status === "fulfilled") {
-      productBuffer = bgSettled.value;
-      bgRemovalPath = "cutout";
-      log(
-        `[studio-test] background removal OK — ${productBuffer.length} bytes transparent PNG [CUTOUT path]`,
-      );
-    } else {
-      const msg =
-        bgSettled.reason instanceof Error
-          ? bgSettled.reason.message
-          : String(bgSettled.reason);
-      log(
-        `[studio-test] background removal FAILED: ${msg} — compositing original photo as-is [FALLBACK path]`,
-      );
-    }
-    log(`[studio-test] bg removal path: ${bgRemovalPath}`);
+    let cutoutBuffer: Buffer = originalBuffer;
 
-    // Extract creative analysis (always defined — analyzeCreative never throws).
+    if (bgSettled.status === "fulfilled") {
+      cutoutBuffer  = bgSettled.value;
+      bgRemovalPath = "cutout";
+      log(`[studio-test] background removal OK — ${cutoutBuffer.length} bytes transparent PNG [CUTOUT path]`);
+    } else {
+      const msg = bgSettled.reason instanceof Error ? bgSettled.reason.message : String(bgSettled.reason);
+      log(`[studio-test] background removal FAILED: ${msg} — using original photo as cutout [FALLBACK path]`);
+    }
+
     const analysis: CreativeAnalysis =
       creativeSettled.status === "fulfilled"
         ? creativeSettled.value
         : { ...CREATIVE_FALLBACK, placementNotes: "creative analysis unavailable" };
     log(
-      `[studio-test] creative — productType=${analysis.productType} bodyPart=${analysis.bodyPart} postType=${analysis.postType} headline="${analysis.headline}"`,
+      `[studio-test] creative — productType=${analysis.productType} bodyPart=${analysis.bodyPart} ` +
+      `postType=${analysis.postType} headline="${analysis.headline}"`,
     );
+    log(`[studio-test] trustBullets: ${JSON.stringify(analysis.trustBullets)}`);
 
+    // ── 4. Optional logo ──────────────────────────────────────────────────
     let logoBuffer: Buffer | undefined;
     let logoUrl: string | undefined;
     if (logoFile) {
       log("[studio-test] uploading logo to Cloudinary...");
-      logoUrl = await uploadBuf(logoFile.buffer, "brandefai/studio-test/logos");
+      logoUrl    = await uploadBuf(logoFile.buffer, "brandefai/studio-test/logos");
       logoBuffer = logoFile.buffer;
-      log(`[studio-test] logo uploaded: ${logoUrl} (${logoFile.buffer.length} bytes, ${logoFile.mimetype})`);
+      log(`[studio-test] logo uploaded: ${logoUrl} (${logoFile.buffer.length} bytes)`);
     } else {
-      log("[studio-test] no logo provided — overlay step will be skipped");
+      log("[studio-test] no logo provided — brand initials will be shown in circle");
     }
 
-    // ── 3. Scene prompt (template rotation) ───────────────────────────────
-    let scenePrompt: string;
-    let sceneNegativeExtra: string | undefined;
+    // ── 5. Template rotation (Redis-backed, drives postType-aware variety) ─
     let templateId: string | undefined;
-
-    // Map GPT-4o bodyPart enum → natural language for the {BODY_PART} slot.
-    // "neckline" → "neck" because "Close crop on neck" reads more naturally
-    // than "Close crop on neckline" in a camera direction sentence.
-    const BODY_PART_FOR_PROMPT: Record<string, string> = {
-      neckline: "neck",
-      wrist:    "wrist",
-      finger:   "finger",
-      ear:      "ear",
-      none:     "wrist",
-    };
-    const bodyPartForPrompt =
-      BODY_PART_FOR_PROMPT[analysis.bodyPart] ?? "wrist";
-
     const cfg = getIndustryConfig(industry);
     if (cfg) {
       const template = await pickRotatedTemplate(cfg, testSessionId, analysis.postType, log);
-      templateId = template.id;
-      ({ prompt: scenePrompt, negativeExtra: sceneNegativeExtra } = buildTemplateScenePrompt(
-        cfg,
-        template,
-        brandName,
-        tone,
-        primaryColor || "#1A7A4A",
-        bodyPartForPrompt,
-      ));
-      log(
-        `[template] using id=${templateId} compositionStyle="${template.compositionStyle}" bodyPart="${bodyPartForPrompt}"`,
-      );
-    } else {
-      scenePrompt = buildScenePrompt(industry, tone, brandName);
-      log(
-        `[studio-test] no industryConfig for "${industry}" — using legacy prompt builder`,
-      );
-    }
-    log(`[studio-test] full prompt sent to Flux+Ideogram: ${scenePrompt}`);
-    log(`[studio-test] negative extra: ${sceneNegativeExtra ?? "(none)"}`);
-
-
-    // ── 4. Generate Flux + Ideogram in parallel ────────────────────────────
-    log("[studio-test] firing Flux + Ideogram in parallel...");
-    const [fluxSettled, ideogramSettled] = await Promise.allSettled([
-      generateFlux(scenePrompt, sceneNegativeExtra, log),
-      generateIdeogram(scenePrompt, sceneNegativeExtra, log),
-    ]);
-
-    if (fluxSettled.status === "rejected")
-      log(`[studio-test] Flux FAILED: ${fluxSettled.reason}`);
-    else log(`[studio-test] Flux OK — ${fluxSettled.value.length} bytes`);
-
-    if (ideogramSettled.status === "rejected")
-      log(`[studio-test] Ideogram FAILED: ${ideogramSettled.reason}`);
-    else
-      log(
-        `[studio-test] Ideogram OK — ${ideogramSettled.value.length} bytes`,
-      );
-
-    // Write rotation state only when at least one model succeeded.
-    if (
-      templateId &&
-      (fluxSettled.status === "fulfilled" ||
-        ideogramSettled.status === "fulfilled")
-    ) {
+      templateId     = template.id;
       await writeTemplateId(testSessionId, templateId, log);
+      log(`[template] selected id=${templateId} compositionStyle="${template.compositionStyle}"`);
+    } else {
+      log(`[studio-test] no industryConfig for "${industry}" — template rotation skipped`);
     }
 
-    if (
-      fluxSettled.status === "rejected" &&
-      ideogramSettled.status === "rejected"
-    ) {
-      res.status(502).json({
-        success: false,
-        data: { logs },
-        error: "Both Flux and Ideogram failed — see logs",
-      });
-      return;
-    }
-
-    // ── 5. Text copy (from Creative Director analysis) ──────────────────────
-    const textParams: TextLayerParams = {
+    // ── 6. Build promo post ────────────────────────────────────────────────
+    log("[studio-test] building promo post (Sharp compositing)…");
+    const promoBuf = await buildPromoPost({
+      productBuffer: originalBuffer,
+      cutoutBuffer,
+      logoBuffer,
       brandName,
-      headline:     analysis.headline,
-      subheadline:  analysis.subheadline,
-      cta:          analysis.cta,
+      brandTagline,
+      headline:    analysis.headline,
+      subheadline: analysis.subheadline,
+      cta:         analysis.cta,
+      trustBullets: analysis.trustBullets,
       primaryColor: primaryColor || "#1A7A4A",
       accentColor:  accentColor  || "#FFD700",
-    };
-    log(`[studio-test] copy — headline="${analysis.headline}" subheadline="${analysis.subheadline}" cta="${analysis.cta}"`);
-    log(`[studio-test] storyAngle="${analysis.storyAngle}" postType="${analysis.postType}"`);
-    log(`[studio-test] trustBullets: ${JSON.stringify(analysis.trustBullets)}`);
+      postType:     analysis.postType,
+      log,
+    });
 
-    // ── 6. Upload raw + composite each model result ────────────────────────
-    type ModelResult = {
-      label: string;
-      rawUrl: string;
-      compositedUrl: string;
-    };
+    // ── 7. Upload composited result ────────────────────────────────────────
+    log("[studio-test] uploading promo post to Cloudinary...");
+    const compositedUrl = await uploadBuf(promoBuf, "brandefai/studio-test/composited");
+    log(`[studio-test] composited uploaded: ${compositedUrl}`);
 
-    const modelTasks: Array<Promise<ModelResult>> = [];
-
-    if (fluxSettled.status === "fulfilled") {
-      const fluxBuf = fluxSettled.value;
-      modelTasks.push(
-        (async (): Promise<ModelResult> => {
-          log("[studio-test][flux] uploading raw bg...");
-          const rawUrl = await uploadBuf(
-            fluxBuf,
-            "brandefai/studio-test/flux-raw",
-          );
-          log(`[studio-test][flux] raw uploaded: ${rawUrl}`);
-
-          log("[studio-test][flux] compositing...");
-          const compositedBuf = await compositeStudioImage({
-            backgroundBuffer: fluxBuf,
-            productBuffer,
-            logoBuffer,
-            productType: analysis.productType,
-            text: textParams,
-            log,
-          });
-          const compositedUrl = await uploadBuf(
-            compositedBuf,
-            "brandefai/studio-test/flux-composited",
-          );
-          log(`[studio-test][flux] composited: ${compositedUrl}`);
-          return { label: "Flux 2 Pro", rawUrl, compositedUrl };
-        })(),
-      );
-    }
-
-    if (ideogramSettled.status === "fulfilled") {
-      const ideoBuf = ideogramSettled.value;
-      modelTasks.push(
-        (async (): Promise<ModelResult> => {
-          log("[studio-test][ideogram] uploading raw bg...");
-          const rawUrl = await uploadBuf(
-            ideoBuf,
-            "brandefai/studio-test/ideogram-raw",
-          );
-          log(`[studio-test][ideogram] raw uploaded: ${rawUrl}`);
-
-          log("[studio-test][ideogram] compositing...");
-          const compositedBuf = await compositeStudioImage({
-            backgroundBuffer: ideoBuf,
-            productBuffer,
-            logoBuffer,
-            productType: analysis.productType,
-            text: textParams,
-            log,
-          });
-          const compositedUrl = await uploadBuf(
-            compositedBuf,
-            "brandefai/studio-test/ideogram-composited",
-          );
-          log(`[studio-test][ideogram] composited: ${compositedUrl}`);
-          return { label: "Ideogram v3", rawUrl, compositedUrl };
-        })(),
-      );
-    }
-
-    const settled = await Promise.allSettled(modelTasks);
-    const results: ModelResult[] = [];
-    for (const s of settled) {
-      if (s.status === "fulfilled") results.push(s.value);
-      else log(`[studio-test] pipeline task FAILED: ${s.reason}`);
-    }
-
-    log(`[studio-test] DONE — ${results.length} result(s)`);
+    log("[studio-test] DONE");
 
     res.json({
       success: true,
@@ -777,14 +268,9 @@ export async function handleStudioTestGenerate(
         productImageUrl,
         logoUrl,
         bgRemovalPath,
-        results,
-        textParams: {
-          headline:    analysis.headline,
-          subheadline: analysis.subheadline,
-          cta:         analysis.cta,
-        },
+        compositedUrl,
+        creativeAnalysis: analysis,
         templateId,
-        creativeAnalysis: analysis,  // full result: classification + copy + trustBullets
         logs,
       },
       error: null,
@@ -792,8 +278,6 @@ export async function handleStudioTestGenerate(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log(`[studio-test] FATAL: ${msg}`);
-    res
-      .status(500)
-      .json({ success: false, data: { logs }, error: msg });
+    res.status(500).json({ success: false, data: { logs }, error: msg });
   }
 }

@@ -13,12 +13,6 @@ import { useState, useRef, useCallback, type FormEvent, type ChangeEvent } from 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface ModelResult {
-  label: string;
-  rawUrl: string;
-  compositedUrl: string;
-}
-
 interface CreativeAnalysis {
   productType:    string;
   bodyPart:       string;
@@ -35,8 +29,7 @@ interface ResponseData {
   productImageUrl: string;
   logoUrl?: string;
   bgRemovalPath?: "cutout" | "fallback";
-  results: ModelResult[];
-  textParams: { headline: string; subheadline: string; cta: string };
+  compositedUrl: string;
   templateId?: string;
   creativeAnalysis?: CreativeAnalysis;
   logs: string[];
@@ -115,100 +108,35 @@ const S = {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function ModelBlock({ result }: { result: ModelResult }) {
-  return (
-    <div style={{ marginBottom: 52 }}>
-      <p
-        style={{
-          fontSize: 11,
-          fontWeight: 700,
-          color: "#555",
-          letterSpacing: "0.10em",
-          textTransform: "uppercase",
-          marginBottom: 14,
-        }}
-      >
-        {result.label}
-      </p>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 20,
-        }}
-      >
-        <ImagePanel label="Raw Model Output" url={result.rawUrl} />
-        <ImagePanel label="Studio-Test Composited ✦" url={result.compositedUrl} accent />
-      </div>
-    </div>
-  );
-}
-
-function ImagePanel({
-  label,
-  url,
-  accent = false,
-}: {
-  label: string;
-  url: string;
-  accent?: boolean;
-}) {
+function PromoImage({ url }: { url: string }) {
   const [err, setErr] = useState(false);
   return (
-    <div>
-      <p
-        style={{
-          fontSize: 11,
-          fontWeight: 600,
-          color: accent ? "#1A7A4A" : "#555",
-          textTransform: "uppercase",
-          letterSpacing: "0.07em",
-          marginBottom: 10,
-        }}
-      >
-        {label}
+    <div style={{ maxWidth: 600, margin: "0 auto" }}>
+      <p style={{
+        fontSize: 11, fontWeight: 700, color: "#1A7A4A",
+        textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12,
+      }}>
+        Promo Post ✦
       </p>
       {err ? (
-        <div
-          style={{
-            aspectRatio: "4/5",
-            background: "#1a1a1a",
-            borderRadius: 10,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#555",
-            fontSize: 13,
-          }}
-        >
+        <div style={{
+          aspectRatio: "1/1", background: "#1a1a1a", borderRadius: 12,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: "#555", fontSize: 13,
+        }}>
           Image failed to load
         </div>
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={url}
-          alt={label}
+          alt="Promo post"
           onError={() => setErr(true)}
-          style={{
-            width: "100%",
-            borderRadius: 10,
-            border: "1px solid #2e2e2e",
-            display: "block",
-          }}
+          style={{ width: "100%", borderRadius: 12, border: "1px solid #2e2e2e", display: "block" }}
         />
       )}
-      <a
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{
-          display: "inline-block",
-          marginTop: 8,
-          color: "#1A7A4A",
-          fontSize: 12,
-          textDecoration: "none",
-        }}
-      >
+      <a href={url} target="_blank" rel="noopener noreferrer"
+        style={{ display: "inline-block", marginTop: 10, color: "#1A7A4A", fontSize: 12, textDecoration: "none" }}>
         Open full size ↗
       </a>
     </div>
@@ -241,7 +169,7 @@ function Spinner({ stage }: { stage: string }) {
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       <p style={{ margin: 0, fontWeight: 600, color: "#aaa" }}>{stage}</p>
       <p style={{ margin: "8px 0 0", fontSize: 13 }}>
-        This takes 30–90 seconds — Flux + Ideogram run in parallel
+        ~15–25 seconds — BiRefNet cutout + GPT-4o copy running in parallel
       </p>
     </div>
   );
@@ -251,6 +179,7 @@ function Spinner({ stage }: { stage: string }) {
 
 export default function StudioTestPage() {
   const [brandName,    setBrandName]    = useState("BranDeFAI Studio");
+  const [brandTagline, setBrandTagline] = useState("Crafted with love, worn forever");
   const [industry,     setIndustry]     = useState<string>("jewellery");
   const [tone,         setTone]         = useState("Luxury, Elegant, Premium");
   const [primaryColor, setPrimaryColor] = useState("#1A7A4A");
@@ -299,20 +228,17 @@ export default function StudioTestPage() {
       try {
         const form = new FormData();
         form.append("brandName",     brandName.trim());
+        form.append("brandTagline",  brandTagline.trim());
         form.append("industry",      industry);
         form.append("tone",          tone.trim());
         form.append("primaryColor",  primaryColor);
         form.append("accentColor",   accentColor);
         form.append("testSessionId", testSessionId);
         form.append("image", productFile, productFile.name);
-        // Logo is optional — backend skips overlay step if absent
+        // Logo is optional — backend shows brand initials if absent
         if (logoFile) form.append("logo", logoFile, logoFile.name);
 
-        setStage(
-          logoFile
-            ? "Generating backgrounds + logo overlay (Flux + Ideogram in parallel)…"
-            : "Generating Flux + Ideogram backgrounds in parallel…",
-        );
+        setStage("Removing background + generating copy in parallel…");
 
         const res = await fetch(`${API_BASE}/api/studio-test/generate`, {
           method: "POST",
@@ -339,7 +265,7 @@ export default function StudioTestPage() {
         setLoading(false);
       }
     },
-    [brandName, industry, tone, primaryColor, accentColor, productFile, logoFile],
+    [brandName, brandTagline, industry, tone, primaryColor, accentColor, productFile, logoFile],
   );
 
   return (
@@ -359,8 +285,7 @@ export default function StudioTestPage() {
             Studio Test
           </h1>
           <p style={{ color: "#555", fontSize: 13, margin: 0 }}>
-            Isolated pipeline · Flux 2 Pro + Ideogram v3 · No shared service
-            code
+            Isolated pipeline · Blurred-original backdrop · BiRefNet + GPT-4o
           </p>
         </div>
 
@@ -384,6 +309,16 @@ export default function StudioTestPage() {
                 style={S.input}
                 placeholder="Your brand name"
                 required
+              />
+            </div>
+
+            <div>
+              <label style={S.label}>Brand Tagline</label>
+              <input
+                value={brandTagline}
+                onChange={(e) => setBrandTagline(e.target.value)}
+                style={S.input}
+                placeholder="Crafted with love, worn forever"
               />
             </div>
 
@@ -610,7 +545,7 @@ export default function StudioTestPage() {
             >
               {loading
                 ? `⏳ ${stage}`
-                : "🚀 Generate — Flux 2 Pro + Ideogram v3"}
+                : "🚀 Generate Promo Post"}
             </button>
           </div>
         </form>
@@ -639,6 +574,7 @@ export default function StudioTestPage() {
         {!loading && response?.data && (
           <div>
             {/* Meta */}
+            {/* Meta strip */}
             <div
               style={{
                 display: "flex",
@@ -651,9 +587,6 @@ export default function StudioTestPage() {
                 border: "1px solid #2e2e2e",
               }}
             >
-              <Meta label="Headline" value={response.data.textParams.headline} />
-              <Meta label="Subheadline" value={response.data.textParams.subheadline} />
-              <Meta label="CTA" value={response.data.textParams.cta} />
               {response.data.templateId && (
                 <Meta label="Template" value={response.data.templateId} />
               )}
@@ -661,6 +594,8 @@ export default function StudioTestPage() {
                 <>
                   <Meta label="Post Type"    value={response.data.creativeAnalysis.postType} />
                   <Meta label="Story Angle"  value={response.data.creativeAnalysis.storyAngle} />
+                  <Meta label="Headline"     value={response.data.creativeAnalysis.headline} />
+                  <Meta label="CTA"          value={response.data.creativeAnalysis.cta} />
                   <Meta label="Product Type" value={response.data.creativeAnalysis.productType} />
                   <Meta label="Body Part"    value={response.data.creativeAnalysis.bodyPart} />
                   {response.data.creativeAnalysis.trustBullets.length > 0 && (
@@ -717,10 +652,8 @@ export default function StudioTestPage() {
               )}
             </div>
 
-            {/* Per-model results */}
-            {response.data.results.map((r) => (
-              <ModelBlock key={r.label} result={r} />
-            ))}
+            {/* Single promo post image */}
+            <PromoImage url={response.data.compositedUrl} />
 
             {/* Server logs */}
             <details style={{ marginTop: 32 }}>
