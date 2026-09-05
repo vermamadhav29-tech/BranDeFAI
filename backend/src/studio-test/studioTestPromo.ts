@@ -10,10 +10,21 @@
  * Self-contained — no imports from the existing service pipeline.
  */
 
+import path from "path";
 import sharp from "sharp";
-import { createCanvas, loadImage } from "canvas";
+import { createCanvas, loadImage, registerFont } from "canvas";
 
 type Logger = (msg: string) => void;
+
+// ─── Register bundled fonts (assets/fonts/) so Canvas works on Railway Linux ──
+// registerFont must run before the first createCanvas call.
+try {
+  const fontDir = path.join(__dirname, "..", "..", "assets", "fonts");
+  registerFont(path.join(fontDir, "NotoSans-Regular.ttf"), { family: "Noto Sans" });
+  registerFont(path.join(fontDir, "NotoSans-Bold.ttf"),    { family: "Noto Sans", weight: "bold" });
+} catch (_) {
+  // If font files aren't present, Canvas falls back to system 'Noto Sans'.
+}
 
 const W = 1080;
 const H = 1080;
@@ -268,7 +279,7 @@ export async function buildPromoPost(input: PromoInput): Promise<Buffer> {
   if (!logoBuffer) {
     const initials = brandName.split(/\s+/).map((w) => w[0] ?? "").join("").slice(0, 2).toUpperCase();
     ctx.fillStyle   = primaryColor;
-    ctx.font        = `bold ${logoR}px sans-serif`;
+    ctx.font        = `bold ${logoR}px 'Noto Sans'`;
     ctx.textAlign   = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(initials, logoX, logoY);
@@ -277,20 +288,20 @@ export async function buildPromoPost(input: PromoInput): Promise<Buffer> {
   // ── Brand name below logo ────────────────────────────────────────────────────
   const brandNameY = logoY + logoR + 20;
   ctx.fillStyle    = "rgba(255,255,255,0.95)";
-  ctx.font         = "bold 18px sans-serif";
+  ctx.font         = "bold 18px 'Noto Sans'";
   ctx.textAlign    = "left";
   ctx.textBaseline = "alphabetic";
   ctx.fillText(brandName.toUpperCase(), 36, brandNameY);
 
   // ── Brand tagline ────────────────────────────────────────────────────────────
   ctx.fillStyle = "rgba(255,255,255,0.60)";
-  ctx.font      = "italic 13px sans-serif";
+  ctx.font      = "italic 13px 'Noto Sans'";
   ctx.fillText(brandTagline, 36, brandNameY + 22);
 
   // ── Headline line 1 ──────────────────────────────────────────────────────────
   const hl1Y = 390;
   ctx.fillStyle    = "rgba(255,255,255,0.97)";
-  ctx.font         = "bold 72px sans-serif";
+  ctx.font         = "bold 72px 'Noto Sans'";
   ctx.textAlign    = "left";
   ctx.textBaseline = "alphabetic";
   ctx.fillText(hl1, 44, hl1Y);
@@ -299,7 +310,7 @@ export async function buildPromoPost(input: PromoInput): Promise<Buffer> {
   const hl2Y = hl1Y + 84;
   if (hl2) {
     ctx.fillStyle = accentColor;
-    ctx.font      = "bold italic 72px sans-serif";
+    ctx.font      = "bold italic 72px 'Noto Sans'";
     ctx.fillText(hl2, 44, hl2Y);
   }
 
@@ -310,7 +321,7 @@ export async function buildPromoPost(input: PromoInput): Promise<Buffer> {
 
   // ── Subheadline ───────────────────────────────────────────────────────────────
   ctx.fillStyle    = "rgba(255,255,255,0.80)";
-  ctx.font         = "22px sans-serif";
+  ctx.font         = "22px 'Noto Sans'";
   ctx.textAlign    = "left";
   ctx.textBaseline = "alphabetic";
   const subStart   = ruleY + 36;
@@ -345,7 +356,7 @@ export async function buildPromoPost(input: PromoInput): Promise<Buffer> {
 
       // Label text centred below icon
       ctx.fillStyle    = "rgba(255,255,255,0.88)";
-      ctx.font         = "bold 12px sans-serif";
+      ctx.font         = "bold 12px 'Noto Sans'";
       ctx.textAlign    = "center";
       ctx.textBaseline = "alphabetic";
       // Wrap long bullets to 2 lines
@@ -364,7 +375,7 @@ export async function buildPromoPost(input: PromoInput): Promise<Buffer> {
 
     // Tagline left-aligned
     ctx.fillStyle    = "rgba(255,255,255,0.72)";
-    ctx.font         = "italic 14px sans-serif";
+    ctx.font         = "italic 14px 'Noto Sans'";
     ctx.textAlign    = "left";
     ctx.textBaseline = "middle";
     ctx.fillText(brandTagline, 30, ctaStripY + ctaStripH / 2);
@@ -380,7 +391,7 @@ export async function buildPromoPost(input: PromoInput): Promise<Buffer> {
     ctx.fill();
 
     ctx.fillStyle    = primaryColor;
-    ctx.font         = "bold 14px sans-serif";
+    ctx.font         = "bold 14px 'Noto Sans'";
     ctx.textAlign    = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(`${cta.toUpperCase()} →`, btnX + btnW / 2, btnY + btnH / 2);
