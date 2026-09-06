@@ -130,6 +130,63 @@ export async function refineCutout(buf: Buffer, log?: Logger): Promise<Buffer> {
   }
 }
 
+/**
+ * BiRefNet sometimes keeps a product's immediate studio surface — a plate,
+ * card, or backdrop swatch it's resting on — as part of the "foreground"
+ * blob, since it's tightly integrated with the product and contrasts
+ * strongly against the true background outside. The overall image can look
+ * like a good cutout (plenty of transparent margin around that card) while
+ * the card itself stays a hard-edged rectangle. Detect this by re-running
+ * the flat-background key, but sampling corners of the CUTOUT'S OWN
+ * BOUNDING BOX of opaque content — not the full canvas — so a residual
+ * card gets caught even when the surrounding photo was cleanly removed.
+ * A no-op (returns the input unchanged) whenever the bounding box's own
+ * corners are already transparent (i.e. the cutout is already tight) or
+ * disagree (a busy/organic product silhouette, nothing flat to remove).
+ */
+export async function refineCutoutSurface(cutoutPng: Buffer, log?: Logger): Promise<Buffer> {
+  try {
+    const meta = await sharp(cutoutPng).metadata();
+    const w = meta.width ?? 0, h = meta.height ?? 0;
+    if (!w || !h) return cutoutPng;
+
+    const { data: alphaData } = await sharp(cutoutPng)
+      .ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true });
+
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        if (alphaData[row + x] > 40) {
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < minX || maxY < minY) return cutoutPng; // nothing opaque at all
+
+    const bw = maxX - minX + 1, bh = maxY - minY + 1;
+    if (bw < 40 || bh < 40) return cutoutPng; // too small to meaningfully refine
+
+    const crop  = await sharp(cutoutPng).extract({ left: minX, top: minY, width: bw, height: bh }).png().toBuffer();
+    const keyed = await tryAutoKeyFlatBackground(crop).catch(() => null);
+    if (!keyed) return cutoutPng; // bbox corners are already transparent, or disagree — nothing to fix
+
+    const refined = await sharp({
+      create: { width: w, height: h, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+    })
+      .composite([{ input: keyed, left: minX, top: minY }])
+      .png()
+      .toBuffer();
+
+    log?.(`[cutout] residual backdrop found inside bounding box (${bw}x${bh} at ${minX},${minY}) — removed`);
+    return refined;
+  } catch (err) {
+    log?.(`[cutout] surface refinement failed, using cutout as-is: ${err instanceof Error ? err.message : String(err)}`);
+    return cutoutPng;
+  }
+}
+
 // ─── Logo preparation ─────────────────────────────────────────────────────────
 
 type Logger = (msg: string) => void;

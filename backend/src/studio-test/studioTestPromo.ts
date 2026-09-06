@@ -16,7 +16,7 @@ import {
 import { fitText, drawLines, drawTracked, measureTracked, type Ctx2D, type FitResult } from "./typeEngine";
 import {
   buildPremiumBackdrop, buildShadowLayer, shadeSvg, spotlightSvg,
-  renderIcon, prepareLogo, refineCutout, roundRect, resolveAccent, type Tone,
+  renderIcon, prepareLogo, refineCutout, refineCutoutSurface, roundRect, resolveAccent, type Tone,
 } from "./studioTestAssets";
 import type { LogoHint } from "./logoVision";
 
@@ -64,9 +64,12 @@ export async function buildPromoPost(i: PromoInput): Promise<Buffer> {
   i.log(`[promo] layout=${L.id} fonts=${P.display}/${P.body} tone=${tone} accent=${accent}`);
 
   // ── 1. Refine + fit product into its region ──────────────────────────────────
-  // refineCutout erodes BiRefNet's colour-contaminated edge pixels before anything
-  // else touches the cutout, so the resize/shadow/composite steps all use clean edges.
-  const refinedCutout = await refineCutout(i.cutoutBuffer, i.log);
+  // refineCutoutSurface catches a studio card/plate BiRefNet kept as part of the
+  // "foreground" blob (a hard rectangular edge around the product even though the
+  // wider photo was cleanly removed); refineCutout then erodes colour-contaminated
+  // edge pixels off whatever's left, so resize/shadow/composite all see clean edges.
+  const surfaceRefined = await refineCutoutSurface(i.cutoutBuffer, i.log);
+  const refinedCutout  = await refineCutout(surfaceRefined, i.log);
   const meta   = await sharp(refinedCutout).metadata();
   const cW     = meta.width  ?? 600;
   const cH     = meta.height ?? 600;
