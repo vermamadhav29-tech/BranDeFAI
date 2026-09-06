@@ -180,9 +180,9 @@ export const LAYOUTS: Record<LayoutId, Layout> = {
   },
   centered_hero: {
     id: "centered_hero",
-    brand:   { x: 540, y: 48,  align: "center", maxLogoH: 96 },
-    product: { x: 240, y: 180, w: 600, h: 480 },
-    text:    { x: 120, y: 680, w: 840, h: 220, align: "center" },
+    brand:   { x: 540, y: 44,  align: "center", maxLogoH: 84 },
+    product: { x: 260, y: 150, w: 560, h: 400 },
+    text:    { x: 100, y: 590, w: 880, h: 300, align: "center" },
     trust:   { x: 40,  y: 930, w: 1000, align: "center" },
     signoff: null,
     shade:   "bottom",

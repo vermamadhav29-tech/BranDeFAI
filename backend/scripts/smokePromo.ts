@@ -69,6 +69,22 @@ async function fakeTightStudioPhoto(): Promise<Buffer> {
   return sharp(Buffer.from(svg)).jpeg().toBuffer();
 }
 
+// Simulates a REALISTIC tight studio photo: directional light means the
+// "flat" backdrop actually has a soft gradient corner-to-corner (unlike the
+// perfectly flat fakeTightStudioPhoto), which is what real photography looks
+// like and what the original 22-unit corner-agreement tolerance rejected.
+async function fakeGradientStudioPhoto(): Promise<Buffer> {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F7EEDF"/><stop offset="1" stop-color="#DDCBA8"/></linearGradient></defs>
+    <rect width="900" height="900" fill="url(#g)"/>
+    <circle cx="450" cy="470" r="220" fill="#8a5a2b"/>
+    <circle cx="380" cy="410" r="30" fill="#3d2410"/>
+    <circle cx="520" cy="520" r="25" fill="#3d2410"/>
+  </svg>`;
+  return sharp(Buffer.from(svg)).jpeg({ quality: 92 }).toBuffer(); // JPEG re-encode adds realistic noise too
+}
+
 async function fakeBackground(): Promise<Buffer> {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080">
     <defs><radialGradient id="r" cx="0.7" cy="0.45" r="0.8">
@@ -157,6 +173,28 @@ async function fakeProductPhoto(): Promise<Buffer> {
     console.log(`  opacity after key=${(afterOpacity * 100).toFixed(1)}% (should be well under 100%)`);
     fs.writeFileSync(path.join(OUT, "smoke_corner_keyed_product.png"), keyed);
   }
+
+  // 4. Same, but with a REALISTIC soft gradient (directional light) instead of a
+  //    perfectly flat backdrop — this is what the 22-unit tolerance used to reject.
+  const gradPhoto = await fakeGradientStudioPhoto();
+  const gradKeyed = await tryAutoKeyFlatBackground(await sharp(gradPhoto).ensureAlpha().png().toBuffer());
+  console.log(`gradient-studio-photo: keyed=${gradKeyed ? "yes" : "no (rejected)"}`);
+  if (gradKeyed) {
+    const afterOpacity = await opacityRatio(gradKeyed);
+    console.log(`  opacity after key=${(afterOpacity * 100).toFixed(1)}%`);
+    fs.writeFileSync(path.join(OUT, "smoke_corner_keyed_gradient.png"), gradKeyed);
+  }
+
+  // 5. The exact AMEECO cookie failure: centered_hero + a 2-word headline that
+  //    wraps to 2 lines + a subheadline + 3 trust bullets. Before the height-aware
+  //    fit, this overflowed centered_hero's 220px text zone straight into the trust row.
+  const f = await buildPromoPost({ ...base, backgroundBuffer: bg, backgroundTone: "dark",
+    layoutId: "centered_hero", fontPairingId: "friendly_rounded",
+    headline: "Sweet Temptation", accentLine: "",
+    subheadline: "Every bite is a cozy escape.",
+    trustBullets: ["Rich Chocolate Chips", "Buttery Caramel", "Crunchy Pecans"],
+    trustIcons: ["cake", "droplets", "wheat"] });
+  fs.writeFileSync(path.join(OUT, "smoke_centered_hero_overflow_check.jpg"), f);
 
   console.log("written to", OUT);
 })().catch((e) => { console.error(e); process.exit(1); });

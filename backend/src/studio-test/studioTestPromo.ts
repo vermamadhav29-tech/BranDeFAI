@@ -166,22 +166,40 @@ export async function buildPromoPost(i: PromoInput): Promise<Buffer> {
   const T  = L.text;
   const tx = T.align === "left" ? T.x : T.align === "right" ? T.x + T.w : T.x + T.w / 2;
 
-  const hl = fitText(ctx, i.headline, {
+  const gapRule = 22, ruleH = 3, gapSub = 24, ruleW = 56;
+  const hasAccent = i.accentLine.trim().length > 0;
+
+  let hl = fitText(ctx, i.headline, {
     fontFor: (s) => dFont(s), maxSize: 92, minSize: 52, maxW: T.w, maxLines: 2, lineHeight: 1.04,
   });
-  let acc: FitResult | null = null;
-  if (i.accentLine.trim()) {
-    acc = fitText(ctx, i.accentLine.trim(), {
-      fontFor: (s) => dFont(s, P.italicAccent), maxSize: hl.size, minSize: 44, maxW: T.w, maxLines: 1, lineHeight: 1.04,
-    });
-  }
-  const sub = fitText(ctx, i.subheadline, {
+  let acc: FitResult | null = hasAccent ? fitText(ctx, i.accentLine.trim(), {
+    fontFor: (s) => dFont(s, P.italicAccent), maxSize: hl.size, minSize: 44, maxW: T.w, maxLines: 1, lineHeight: 1.04,
+  }) : null;
+  let sub = fitText(ctx, i.subheadline, {
     fontFor: (s) => bFont(s), maxSize: 26, minSize: 19, maxW: T.w, maxLines: 3, lineHeight: 1.38,
   });
 
-  const gapRule = 22, ruleH = 3, gapSub = 24, ruleW = 56;
-  const blockH  = hl.totalH + (acc?.totalH ?? 0) + gapRule + ruleH + gapSub + sub.totalH;
-  let   y       = T.y + Math.max(0, (T.h - blockH) / 2);
+  let blockH = hl.totalH + (acc?.totalH ?? 0) + gapRule + ruleH + gapSub + sub.totalH;
+
+  // fitText only shrinks for width — a tight text zone (e.g. centered_hero's 220px,
+  // shared with a product image and trust row above/below it) can still overflow
+  // vertically. Re-fit everything, scaled down together, so the block as a whole
+  // fits its box instead of spilling into whatever sits below it.
+  if (T.h > 0 && blockH > T.h) {
+    const scale = Math.max(0.5, T.h / blockH);
+    hl = fitText(ctx, i.headline, {
+      fontFor: (s) => dFont(s), maxSize: Math.max(34, Math.round(92 * scale)), minSize: 30, maxW: T.w, maxLines: 2, lineHeight: 1.0,
+    });
+    acc = hasAccent ? fitText(ctx, i.accentLine.trim(), {
+      fontFor: (s) => dFont(s, P.italicAccent), maxSize: hl.size, minSize: 26, maxW: T.w, maxLines: 1, lineHeight: 1.0,
+    }) : null;
+    sub = fitText(ctx, i.subheadline, {
+      fontFor: (s) => bFont(s), maxSize: Math.max(15, Math.round(26 * scale)), minSize: 13, maxW: T.w, maxLines: 3, lineHeight: 1.28,
+    });
+    blockH = hl.totalH + (acc?.totalH ?? 0) + gapRule + ruleH + gapSub + sub.totalH;
+  }
+
+  let y = T.y + Math.max(0, (T.h - blockH) / 2);
 
   ctx.fillStyle = textCol;
   ctx.font      = dFont(hl.size);

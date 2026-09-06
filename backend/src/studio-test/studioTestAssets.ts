@@ -190,15 +190,24 @@ export async function tryAutoKeyFlatBackground(png: Buffer): Promise<Buffer | nu
   );
   if (corners.some((c) => c === null)) return null; // a corner is genuinely transparent — ambiguous, bail
   const solid = corners as [number, number, number][];
-  const bg = solid[0];
-  if (Math.max(...solid.map((c) => colorDist(c, bg))) > 22) return null; // corners disagree
+  // Real photography backdrops are almost never perfectly flat — directional
+  // light and vignetting mean the four corners will differ somewhat even on a
+  // genuinely plain surface. Use their average as the reference colour (not
+  // just one corner, which biases toward whichever side happens to be lighter/
+  // darker) and allow more disagreement than a studio-perfect synthetic test needs.
+  const bg: [number, number, number] = [
+    solid.reduce((s, c) => s + c[0], 0) / solid.length,
+    solid.reduce((s, c) => s + c[1], 0) / solid.length,
+    solid.reduce((s, c) => s + c[2], 0) / solid.length,
+  ];
+  if (Math.max(...solid.map((c) => colorDist(c, bg))) > 42) return null; // corners genuinely disagree (busy/complex bg)
 
   // ensureAlpha (not removeAlpha) so pixels that were already transparent — e.g. a
   // rounded corner cut outside the card — stay transparent regardless of colour
   // distance, instead of flattening to black and reading as "far from bg = foreground".
   const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const alpha = Buffer.alloc(w * h);
-  const LOW = 18, HIGH = 55; // soft threshold band for anti-aliased edges
+  const LOW = 26, HIGH = 78; // wider soft band to cover gentle real-world gradients
   for (let i = 0, p = 0; p + 3 < data.length; p += 4, i++) {
     const d = colorDist([data[p], data[p + 1], data[p + 2]], bg);
     const byColor = d <= LOW ? 0 : d >= HIGH ? 255 : Math.round(((d - LOW) / (HIGH - LOW)) * 255);
