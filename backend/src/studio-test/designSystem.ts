@@ -142,7 +142,10 @@ export interface Layout {
   text:    Rect & { align: Align };
   product: Rect;
   trust:   { x: number; y: number; w: number; align: Align } | null;
-  signoff: { x: number; y: number; align: Align } | null;
+  /** shareTrustRow: signoff sits beside the trust bullets, same visual row —
+   *  the renderer computes signoff's max width and y from the trust block's
+   *  actual rendered bounds so the two can never collide, regardless of copy length. */
+  signoff: { x: number; y: number; align: Align; shareTrustRow?: boolean } | null;
   /** Direction of the legibility gradient laid over the backdrop behind the text zone */
   shade:   "left" | "right" | "top" | "bottom";
 }
@@ -154,7 +157,7 @@ export const LAYOUTS: Record<LayoutId, Layout> = {
     text:    { x: 60,  y: 330, w: 440, h: 440, align: "left" },
     product: { x: 530, y: 140, w: 500, h: 720 },
     trust:   { x: 48,  y: 880, w: 560, align: "left" },
-    signoff: { x: 1020, y: 955, align: "right" },
+    signoff: { x: 1020, y: 955, align: "right", shareTrustRow: true },
     shade:   "left",
   },
   text_right_product_left: {
@@ -163,7 +166,7 @@ export const LAYOUTS: Record<LayoutId, Layout> = {
     text:    { x: 580, y: 330, w: 440, h: 440, align: "right" },
     product: { x: 50,  y: 140, w: 500, h: 720 },
     trust:   { x: 540, y: 880, w: 500, align: "left" },
-    signoff: { x: 60,  y: 955, align: "left" },
+    signoff: { x: 60,  y: 955, align: "left", shareTrustRow: true },
     shade:   "right",
   },
   text_top_product_bottom: {

@@ -193,12 +193,23 @@ export async function buildPromoPost(i: PromoInput): Promise<Buffer> {
 
   // Trust row -------------------------------------------------------------------
   const bullets = i.trustBullets.filter(Boolean).slice(0, 3);
+  // Captures the trust block's actual rendered bounds so the sign-off (drawn next)
+  // can size and position itself against reality instead of guessed constants.
+  let trustBounds: { left: number; right: number; centerY: number } | null = null;
+
   if (L.trust && bullets.length > 0) {
     const R      = L.trust;
     const n      = bullets.length;
     const colW   = R.align === "center" ? R.w / n : Math.min(196, R.w / n);
     const startX = R.align === "center" ? R.x + (R.w - colW * n) / 2 : R.x;
     const iconSz = 30;
+    const labelTopY = R.y + iconSz + 12;
+
+    const labelFits = bullets.map((b) =>
+      fitText(ctx, b, {
+        fontFor: (s) => bFont(s, "600"), maxSize: 16, minSize: 13, maxW: colW - 24, maxLines: 2, lineHeight: 1.25,
+      }),
+    );
 
     for (let k = 0; k < n; k++) {
       const cx = startX + colW * k + colW / 2;
@@ -219,13 +230,14 @@ export async function buildPromoPost(i: PromoInput): Promise<Buffer> {
         ctx.drawImage(im, cx - iconSz / 2, R.y, iconSz, iconSz);
       }
 
-      const lab = fitText(ctx, bullets[k], {
-        fontFor: (s) => bFont(s, "600"), maxSize: 16, minSize: 13, maxW: colW - 24, maxLines: 2, lineHeight: 1.25,
-      });
       ctx.fillStyle = textCol;
-      ctx.font      = bFont(lab.size, "600");
-      drawLines(ctx, lab.lines, cx, R.y + iconSz + 12, lab.lineH, "center");
+      ctx.font      = bFont(labelFits[k].size, "600");
+      drawLines(ctx, labelFits[k].lines, cx, labelTopY, labelFits[k].lineH, "center");
     }
+
+    let blockBottom = labelTopY;
+    for (const lab of labelFits) blockBottom = Math.max(blockBottom, labelTopY + lab.totalH);
+    trustBounds = { left: startX, right: startX + colW * n, centerY: (R.y + blockBottom) / 2 };
   }
 
   // Sign-off --------------------------------------------------------------------
@@ -233,40 +245,52 @@ export async function buildPromoPost(i: PromoInput): Promise<Buffer> {
     const S        = L.signoff;
     const brandStr = `${i.brandName}.`;
     const tag      = i.brandTagline.trim();
-    ctx.textBaseline = "alphabetic";
+    const GAP      = 28;
 
+    // Default (no trust row to dodge, or trust not on this same row).
+    let maxW  = trustBounds ? 440 : 620;
+    let signY = S.y;
+
+    // Sharing a row with the trust bullets: derive width and y from the trust
+    // block's real rendered bounds so the two never overlap, whatever the copy.
+    if (trustBounds && S.shareTrustRow) {
+      if (S.align === "right")      maxW = Math.max(150, S.x - trustBounds.right - GAP);
+      else if (S.align === "left")  maxW = Math.max(150, trustBounds.left - S.x - GAP);
+      signY = trustBounds.centerY + 9;   // alphabetic baseline vs. visual centre
+    }
+
+    ctx.textBaseline = "alphabetic";
     ctx.font = dFont(30);
     const bw = ctx.measureText(brandStr).width;
     ctx.font = dFont(26, P.italicAccent, "normal");
     const tw  = tag ? ctx.measureText(tag).width : 0;
     const gap = tag ? 14 : 0;
-    const maxW = L.trust ? 440 : 620;
 
     if (!tag || bw + gap + tw <= maxW) {
       const total = bw + gap + tw;
       const x0 = S.align === "right" ? S.x - total : S.align === "left" ? S.x : S.x - total / 2;
       ctx.textAlign = "left";
       ctx.fillStyle = textCol; ctx.font = dFont(30);
-      ctx.fillText(brandStr, x0, S.y);
+      ctx.fillText(brandStr, x0, signY);
       if (tag) {
         ctx.fillStyle = accent; ctx.font = dFont(26, P.italicAccent, "normal");
-        ctx.fillText(tag, x0 + bw + gap, S.y);
+        ctx.fillText(tag, x0 + bw + gap, signY);
       }
     } else {
       ctx.textAlign = S.align as Align;
       ctx.fillStyle = textCol; ctx.font = dFont(30);
-      ctx.fillText(brandStr, S.x, S.y - 34);
+      ctx.fillText(brandStr, S.x, signY - 34);
       const tf = fitText(ctx, tag, {
         fontFor: (s) => dFont(s, P.italicAccent, "normal"), maxSize: 26, minSize: 18, maxW, maxLines: 1,
       });
       ctx.textBaseline = "alphabetic";
       ctx.fillStyle = accent; ctx.font = dFont(tf.size, P.italicAccent, "normal");
-      ctx.fillText(tf.lines[0], S.x, S.y);
+      ctx.fillText(tf.lines[0], S.x, signY);
     }
 
     const ruleX = S.align === "right" ? S.x - 60 : S.align === "left" ? S.x : S.x - 30;
     ctx.fillStyle = accent;
-    ctx.fillRect(ruleX, S.y + 14, 60, 2);
+    ctx.fillRect(ruleX, signY + 14, 60, 2);
   }
 
   // ── 5. Composite + encode ─────────────────────────────────────────────────
