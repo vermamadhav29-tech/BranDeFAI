@@ -40,7 +40,7 @@ interface DerivedColors {
 interface ResponseData {
   productImageUrl: string;
   logoUrl?: string;
-  bgRemovalPath?: "cutout" | "fallback";
+  bgRemovalPath?: "cutout" | "corner-key" | "fallback";
   compositedUrl: string;
   backgroundSource?: string;
   backgroundTone?: string;
@@ -599,18 +599,20 @@ export default function StudioTestPage() {
                     textTransform: "uppercase",
                     alignSelf: "center",
                     background:
-                      response.data.bgRemovalPath === "cutout"
+                      response.data.bgRemovalPath !== "fallback"
                         ? "rgba(26,122,74,0.18)"
                         : "rgba(180,80,0,0.18)",
                     color:
-                      response.data.bgRemovalPath === "cutout"
+                      response.data.bgRemovalPath !== "fallback"
                         ? "#1A7A4A"
                         : "#cc6600",
-                    border: `1px solid ${response.data.bgRemovalPath === "cutout" ? "#1A7A4A55" : "#cc660055"}`,
+                    border: `1px solid ${response.data.bgRemovalPath !== "fallback" ? "#1A7A4A55" : "#cc660055"}`,
                   }}
                 >
                   {response.data.bgRemovalPath === "cutout"
                     ? "BiRefNet cutout"
+                    : response.data.bgRemovalPath === "corner-key"
+                    ? "corner-colour key"
                     : "fallback (original)"}
                 </div>
               )}

@@ -19,7 +19,8 @@ import { removeBackground } from "./backgroundRemoval";
 import { pickBackground, fetchBackground, analyseTone } from "./backgroundLibrary";
 import { generateLiveBackdrop } from "./backgroundGenerator";
 import { deriveBrandColors } from "./colorExtraction";
-import type { Tone } from "./studioTestAssets";
+import { inspectLogo, type LogoHint } from "./logoVision";
+import { tryAutoKeyFlatBackground, opacityRatio, type Tone } from "./studioTestAssets";
 import type { LayoutId } from "./designSystem";
 import {
   analyzeCreative,
@@ -178,14 +179,27 @@ export async function handleStudioTestGenerate(
     const originalBuffer = productFile.buffer;
     log(`[studio-test] product received — ${originalBuffer.length} bytes, ${productFile.mimetype}`);
 
-    // ── 2. Upload product to Cloudinary ───────────────────────────────────
+    // ── 2. Upload product + logo to Cloudinary ─────────────────────────────
     log("[studio-test] uploading product to Cloudinary...");
     const productImageUrl = await uploadBuf(originalBuffer, "brandefai/studio-test/products");
     log(`[studio-test] product uploaded: ${productImageUrl}`);
 
-    // ── 3. BG removal + Creative Director in parallel ─────────────────────
-    log("[studio-test] background removal + creative analysis in parallel…");
-    const [bgSettled, creativeSettled] = await Promise.allSettled([
+    let logoBuffer: Buffer | undefined;
+    let logoUrl: string | undefined;
+    if (logoFile) {
+      log("[studio-test] uploading logo to Cloudinary...");
+      logoUrl    = await uploadBuf(logoFile.buffer, "brandefai/studio-test/logos");
+      logoBuffer = logoFile.buffer;
+      log(`[studio-test] logo uploaded: ${logoUrl} (${logoFile.buffer.length} bytes)`);
+    } else {
+      log("[studio-test] no logo provided — brand initials will be shown");
+    }
+
+    // ── 3. BG removal + Creative Director + Logo vision, all in parallel ───
+    // The logo check is cheap (~5-10s) and rides for free alongside the ~85s
+    // creative pipeline — no added latency.
+    log("[studio-test] background removal + creative analysis + logo check in parallel…");
+    const [bgSettled, creativeSettled, logoHintSettled] = await Promise.allSettled([
       removeBackground(productImageUrl, log),
       analyzeCreative({
         imageUrl:  productImageUrl,
@@ -196,18 +210,49 @@ export async function handleStudioTestGenerate(
         locale,
         log,
       }),
+      logoUrl ? inspectLogo(logoUrl, log) : Promise.resolve(null),
     ]);
 
-    let bgRemovalPath: "cutout" | "fallback" = "fallback";
+    const logoHint: LogoHint | null =
+      logoHintSettled.status === "fulfilled" ? logoHintSettled.value : null;
+
+    let bgRemovalPath: "cutout" | "corner-key" | "fallback" = "fallback";
     let cutoutBuffer: Buffer = originalBuffer;
 
     if (bgSettled.status === "fulfilled") {
       cutoutBuffer  = bgSettled.value;
       bgRemovalPath = "cutout";
       log(`[studio-test] background removal OK — ${cutoutBuffer.length} bytes transparent PNG [CUTOUT path]`);
+
+      // BiRefNet sometimes has nothing to remove: a tightly-framed studio photo
+      // whose backdrop fills the whole frame gets classified as "all foreground",
+      // returning an almost-fully-opaque result. Detect that and try a corner-
+      // colour key on the original photo as a supplementary pass.
+      const opacity = await opacityRatio(cutoutBuffer).catch(() => 1);
+      log(`[studio-test] cutout opacity ratio=${(opacity * 100).toFixed(1)}%`);
+      if (opacity > 0.97) {
+        log("[studio-test] BiRefNet result is almost fully opaque — likely nothing to remove; " +
+            "trying a corner-colour key on the original photo");
+        const keyed = await tryAutoKeyFlatBackground(originalBuffer).catch(() => null);
+        if (keyed) {
+          cutoutBuffer  = keyed;
+          bgRemovalPath = "corner-key";
+          log("[studio-test] corner-colour key succeeded [CORNER-KEY path]");
+        } else {
+          log("[studio-test] corner-colour key found no uniform background — keeping BiRefNet result as-is");
+        }
+      }
     } else {
       const msg = bgSettled.reason instanceof Error ? bgSettled.reason.message : String(bgSettled.reason);
-      log(`[studio-test] background removal FAILED: ${msg} — using original photo as cutout [FALLBACK path]`);
+      log(`[studio-test] background removal FAILED: ${msg} — trying a corner-colour key on the original photo`);
+      const keyed = await tryAutoKeyFlatBackground(originalBuffer).catch(() => null);
+      if (keyed) {
+        cutoutBuffer  = keyed;
+        bgRemovalPath = "corner-key";
+        log("[studio-test] corner-colour key succeeded [CORNER-KEY path]");
+      } else {
+        log("[studio-test] corner-colour key also found no uniform background — using original photo as-is [FALLBACK path]");
+      }
     }
 
     const analysis: CreativeAnalysis =
@@ -234,18 +279,6 @@ export async function handleStudioTestGenerate(
         log(`[studio-test] cutout is wide (h/w=${aspect.toFixed(2)}) — layout overridden → ${layoutId}`);
       }
     } catch (_) { /* keep AI layout */ }
-
-    // ── 3c. Optional logo (moved up — colour derivation needs it) ──────────────
-    let logoBuffer: Buffer | undefined;
-    let logoUrl: string | undefined;
-    if (logoFile) {
-      log("[studio-test] uploading logo to Cloudinary...");
-      logoUrl    = await uploadBuf(logoFile.buffer, "brandefai/studio-test/logos");
-      logoBuffer = logoFile.buffer;
-      log(`[studio-test] logo uploaded: ${logoUrl} (${logoFile.buffer.length} bytes)`);
-    } else {
-      log("[studio-test] no logo provided — brand initials will be shown");
-    }
 
     // ── 3d. Auto-derive brand colours from the logo, or fall back to the product ──
     const derivedColors = await deriveBrandColors(logoBuffer, cutoutBuffer, log);
@@ -298,6 +331,7 @@ export async function handleStudioTestGenerate(
       productBuffer:    originalBuffer,
       cutoutBuffer,
       logoBuffer,
+      logoHint,
       backgroundBuffer,
       backgroundTone,
       brandName,

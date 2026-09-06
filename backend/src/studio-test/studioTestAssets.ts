@@ -15,6 +15,7 @@ import fs from "fs";
 import path from "path";
 import sharp from "sharp";
 import type { Ctx2D } from "./typeEngine";
+import type { LogoHint } from "./logoVision";
 
 export type Tone = "dark" | "light";
 
@@ -143,104 +144,165 @@ function colorDist(a: [number, number, number], b: [number, number, number]): nu
   return Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2);
 }
 
-async function averageColor(buf: Buffer): Promise<[number, number, number]> {
-  const { data, info } = await sharp(buf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  const ch = info.channels;
+/**
+ * Average colour over the OPAQUE pixels of a patch only. Returns null if the
+ * patch is essentially all transparent (no usable colour signal there) —
+ * critically, does NOT fall back to Sharp's removeAlpha() default of
+ * flattening transparent pixels to black, which previously made a rounded
+ * corner's real transparency read as "the background colour is black".
+ */
+async function averageColor(buf: Buffer): Promise<[number, number, number] | null> {
+  const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   let r = 0, g = 0, b = 0, n = 0;
-  for (let p = 0; p + ch - 1 < data.length; p += ch) { r += data[p]; g += data[p + 1]; b += data[p + 2]; n++; }
-  return n ? [r / n, g / n, b / n] : [255, 255, 255];
+  for (let p = 0; p + 3 < data.length; p += 4) {
+    if (data[p + 3] < 40) continue; // skip transparent/near-transparent pixels
+    r += data[p]; g += data[p + 1]; b += data[p + 2]; n++;
+  }
+  return n ? [r / n, g / n, b / n] : null;
 }
 
 /**
- * Many "opaque" logos are just a flat-colour (usually white) background behind
- * the mark. Sample the four corners; if they agree, key that colour out via a
- * soft alpha threshold instead of caging the whole file on a card. Returns
- * null if the corners disagree (photographic/gradient background) or the
- * result is implausible (near-empty or near-solid).
+ * Many "opaque" images — logos and product photos alike — are just a
+ * flat-colour background (a white/cream studio backdrop, a solid brand-colour
+ * card) behind the actual subject. Sample four patches inset from the corners
+ * — not the literal edge pixels, which land inside the cut-away area of any
+ * rounded corner and would otherwise read as false transparency — and if they
+ * agree, key that colour out via a soft alpha threshold instead of leaving
+ * the whole frame untouched. Returns null if the corners disagree
+ * (photographic/gradient/cluttered background), a corner is genuinely
+ * transparent with nothing to sample, or the result is implausible
+ * (near-empty or near-solid — i.e. nothing meaningful was actually keyed).
  */
-async function tryAutoKeyLogoBackground(png: Buffer): Promise<Buffer | null> {
+export async function tryAutoKeyFlatBackground(png: Buffer): Promise<Buffer | null> {
   const meta = await sharp(png).metadata();
   const w = meta.width ?? 0, h = meta.height ?? 0;
   if (!w || !h || w < 20 || h < 20) return null;
 
-  const s = Math.max(4, Math.round(Math.min(w, h) * 0.06));
+  const s      = Math.max(4, Math.round(Math.min(w, h) * 0.06));
+  const inset  = Math.round(Math.min(w, h) * 0.18); // clears typical rounded-corner radii
+  const points: [number, number][] = [
+    [inset, inset], [w - inset - s, inset], [inset, h - inset - s], [w - inset - s, h - inset - s],
+  ];
   const corners = await Promise.all(
-    [[0, 0], [w - s, 0], [0, h - s], [w - s, h - s]].map(([x, y]) =>
+    points.map(([x, y]) =>
       sharp(png).extract({ left: x, top: y, width: s, height: s }).png().toBuffer().then(averageColor),
     ),
   );
-  const bg = corners[0];
-  if (Math.max(...corners.map((c) => colorDist(c, bg))) > 22) return null; // corners disagree
+  if (corners.some((c) => c === null)) return null; // a corner is genuinely transparent — ambiguous, bail
+  const solid = corners as [number, number, number][];
+  const bg = solid[0];
+  if (Math.max(...solid.map((c) => colorDist(c, bg))) > 22) return null; // corners disagree
 
-  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  const ch = info.channels;
+  // ensureAlpha (not removeAlpha) so pixels that were already transparent — e.g. a
+  // rounded corner cut outside the card — stay transparent regardless of colour
+  // distance, instead of flattening to black and reading as "far from bg = foreground".
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const alpha = Buffer.alloc(w * h);
   const LOW = 18, HIGH = 55; // soft threshold band for anti-aliased edges
-  for (let i = 0, p = 0; p + ch - 1 < data.length; p += ch, i++) {
+  for (let i = 0, p = 0; p + 3 < data.length; p += 4, i++) {
     const d = colorDist([data[p], data[p + 1], data[p + 2]], bg);
-    alpha[i] = d <= LOW ? 0 : d >= HIGH ? 255 : Math.round(((d - LOW) / (HIGH - LOW)) * 255);
+    const byColor = d <= LOW ? 0 : d >= HIGH ? 255 : Math.round(((d - LOW) / (HIGH - LOW)) * 255);
+    alpha[i] = Math.min(byColor, data[p + 3]); // never resurrect a pixel that was already transparent
   }
 
+  // A real mark can legitimately be a small fraction of the canvas (a delicate wordmark
+  // on a big colour card) — only reject the extremes: near-zero means the corners'
+  // colour matched almost everything (nothing distinguishable found at all); near-total
+  // means the "background" colour barely appears anywhere (corner sample was wrong).
   const opaqueRatio = alpha.reduce((sum, v) => sum + (v > 128 ? 1 : 0), 0) / alpha.length;
-  if (opaqueRatio < 0.02 || opaqueRatio > 0.92) return null; // implausible: essentially empty or essentially solid
+  if (opaqueRatio < 0.003 || opaqueRatio > 0.95) return null;
 
   const alphaImg = await sharp(alpha, { raw: { width: w, height: h, channels: 1 } }).blur(0.5).png().toBuffer();
   const rgbImg   = await sharp(png).removeAlpha().png().toBuffer();
   return sharp(rgbImg).joinChannel(alphaImg).png().toBuffer();
 }
 
+/** Fraction of pixels that are essentially fully opaque (alpha > 250). */
+export async function opacityRatio(buf: Buffer): Promise<number> {
+  const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const ch = info.channels;
+  let opaque = 0, total = 0;
+  for (let p = 0; p + ch - 1 < data.length; p += ch) { total++; if (data[p + ch - 1] > 250) opaque++; }
+  return total ? opaque / total : 1;
+}
+
 /**
- * Makes the logo legible on the backdrop:
- *   transparent logo whose ink fights the tone → monochrome silhouette in the text colour
- *   transparent logo that already reads         → unchanged
- *   opaque logo with a flat background          → auto-keyed transparent (background removed)
- *   opaque logo, background can't be auto-keyed → drawn on a small card, treated as a full lockup
+ * Makes the logo legible on the backdrop. Primary signal is a GPT-4o vision
+ * hint (see logoVision.ts) — pixel heuristics alone were repeatedly fooled by
+ * real logos (e.g. a rounded-corner colour-card logo has just enough
+ * incidental transparency at the corners to look "already fine" even though
+ * it has a solid fill and baked-in text). Falls back to the old pixel signal
+ * only when no hint is available (OpenAI unreachable, or no logo analysis
+ * could run in time):
+ *   hint transparent            → unchanged (silhouette only if ink fights the tone)
+ *   hint flat_color             → auto-key that colour out (always attempted, not gated on aspect/opacity)
+ *   hint complex, or no hint & opaque with un-keyable bg → drawn on a small card
+ *   isFullLockup (suppress separate name text) → from hint.hasBakedInText, else aspect ratio
  */
-export async function prepareLogo(logo: Buffer, tone: Tone): Promise<PreparedLogo> {
-  const base = sharp(logo).ensureAlpha();
-  const png  = await base.png().toBuffer();
-
-  // Whether the file carries a baked-in wordmark/tagline is independent of whether
-  // we can clean its background — judge it by shape instead: icon-only marks are
-  // roughly square, while a mark + name (+ tagline) needs a wide or tall canvas.
-  const dims   = await sharp(png).metadata();
-  const aspect = (dims.width ?? 1) / (dims.height ?? 1);
-  const isFullLockup = aspect > 1.6 || aspect < 0.6;
-
-  const { data, info } = await sharp(png)
-    .resize(160, 160, { fit: "inside" })
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
+/** Average luminance over a transparent PNG's own opaque ("ink") pixels only. */
+async function inkLuminance(png: Buffer): Promise<number> {
+  const { data } = await sharp(png).resize(160, 160, { fit: "inside" }).raw().toBuffer({ resolveWithObject: true });
   let opaque = 0, lumSum = 0;
-  const total = info.width * info.height;
   for (let p = 0; p < data.length; p += 4) {
     const a = data[p + 3];
     if (a < 40) continue;
     opaque++;
     lumSum += (0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2]) / 255;
   }
-  const transparentRatio = 1 - opaque / total;
-  const inkLum = opaque ? lumSum / opaque : 0.5;
+  return opaque ? lumSum / opaque : 0.5;
+}
 
-  if (transparentRatio < 0.12) {
-    const keyed = await tryAutoKeyLogoBackground(png).catch(() => null);
-    if (keyed) return { png: keyed, onCard: false, isFullLockup };
-    return { png, onCard: true, isFullLockup: true }; // couldn't clean at all — play it safe
-  }
-
+/** If the transparent PNG's ink is too close to the backdrop tone to read, recolour it as a flat silhouette. */
+async function silhouetteIfFighting(png: Buffer, tone: Tone): Promise<Buffer> {
+  const inkLum = await inkLuminance(png);
   const fights = (tone === "dark" && inkLum < 0.45) || (tone === "light" && inkLum > 0.62);
-  if (!fights) return { png, onCard: false, isFullLockup };
+  if (!fights) return png;
 
+  const meta = await sharp(png).metadata();
   const fill = tone === "dark" ? { r: 255, g: 255, b: 255, alpha: 1 } : { r: 22, g: 22, b: 22, alpha: 1 };
-  const silhouette = await sharp({
-    create: { width: dims.width!, height: dims.height!, channels: 4, background: fill },
-  })
+  return sharp({ create: { width: meta.width!, height: meta.height!, channels: 4, background: fill } })
     .composite([{ input: png, blend: "dest-in" }])
     .png()
     .toBuffer();
+}
 
-  return { png: silhouette, onCard: false, isFullLockup };
+export async function prepareLogo(
+  logo: Buffer,
+  tone: Tone,
+  hint?: LogoHint | null,
+): Promise<PreparedLogo> {
+  const base = sharp(logo).ensureAlpha();
+  const png  = await base.png().toBuffer();
+
+  const dims   = await sharp(png).metadata();
+  const aspect = (dims.width ?? 1) / (dims.height ?? 1);
+  const aspectSuggestsLockup = aspect > 1.6 || aspect < 0.6;
+  const isFullLockup = hint ? hint.hasBakedInText : aspectSuggestsLockup;
+
+  const { data, info } = await sharp(png)
+    .resize(160, 160, { fit: "inside" })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  let opaque = 0;
+  const total = info.width * info.height;
+  for (let p = 0; p < data.length; p += 4) if (data[p + 3] >= 40) opaque++;
+  const transparentRatio = 1 - opaque / total;
+
+  const shouldTryKey  = hint ? hint.backgroundStyle === "flat_color"  : transparentRatio < 0.12;
+  const alreadyClean  = hint ? hint.backgroundStyle === "transparent" : transparentRatio >= 0.12;
+
+  if (shouldTryKey) {
+    const keyed = await tryAutoKeyFlatBackground(png).catch(() => null);
+    if (keyed) return { png: await silhouetteIfFighting(keyed, tone), onCard: false, isFullLockup };
+    return { png, onCard: true, isFullLockup: true }; // couldn't clean at all — play it safe
+  }
+
+  if (alreadyClean) {
+    return { png: await silhouetteIfFighting(png, tone), onCard: false, isFullLockup };
+  }
+
+  // hint === "complex" — a photo/gradient/pattern background; not worth attempting to key.
+  return { png, onCard: true, isFullLockup };
 }
 
 // ─── Contact shadow ───────────────────────────────────────────────────────────

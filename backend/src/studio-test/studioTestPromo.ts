@@ -18,6 +18,7 @@ import {
   buildPremiumBackdrop, buildShadowLayer, shadeSvg, spotlightSvg,
   renderIcon, prepareLogo, refineCutout, roundRect, resolveAccent, type Tone,
 } from "./studioTestAssets";
+import type { LogoHint } from "./logoVision";
 
 registerAllFonts();
 
@@ -27,6 +28,7 @@ export interface PromoInput {
   productBuffer:     Buffer;          // original photo (fallback backdrop source)
   cutoutBuffer:      Buffer;          // BiRefNet transparent PNG
   logoBuffer?:       Buffer;
+  logoHint?:         LogoHint | null;
   backgroundBuffer?: Buffer;          // library backdrop, already 1080×1080
   backgroundTone:    Tone;
   brandName:         string;
@@ -118,7 +120,7 @@ export async function buildPromoPost(i: PromoInput): Promise<Buffer> {
 
   if (i.logoBuffer) {
     try {
-      const { png, onCard, isFullLockup } = await prepareLogo(i.logoBuffer, tone);
+      const { png, onCard, isFullLockup } = await prepareLogo(i.logoBuffer, tone, i.logoHint);
       const img  = await loadImage(png);
       const s    = Math.min(260 / img.width, B.maxLogoH / img.height);
       const lw   = img.width * s;

@@ -5,6 +5,7 @@ import path from "path";
 import sharp from "sharp";
 import { buildPromoPost } from "../src/studio-test/studioTestPromo";
 import { pickBackground, fetchBackground } from "../src/studio-test/backgroundLibrary";
+import { tryAutoKeyFlatBackground, opacityRatio } from "../src/studio-test/studioTestAssets";
 
 const OUT = process.argv[2] ?? __dirname;
 
@@ -39,6 +40,33 @@ async function fakeLockupLogo(): Promise<Buffer> {
     <rect x="130" y="145" width="160" height="10" fill="#666666"/>
   </svg>`;
   return sharp(Buffer.from(svg)).jpeg().toBuffer(); // JPEG: no alpha at all, forces the opaque path
+}
+
+// Simulates the AMEECO failure case: a NEAR-SQUARE rounded-corner colour-card
+// logo with baked-in text. Aspect ratio alone (~1.3) would NOT flag this as a
+// lockup, and the rounded transparent corners can push transparentRatio over
+// the old 0.12 threshold, making the pixel heuristic think it's "already fine".
+// A logoHint from GPT (hasBakedInText, backgroundStyle) is the only reliable fix.
+async function fakeRoundedCardLogo(): Promise<Buffer> {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="280" height="220">
+    <rect x="0" y="0" width="280" height="220" rx="28" fill="#E27E9A"/>
+    <text x="140" y="120" font-family="sans-serif" font-size="34" font-style="italic"
+          fill="#3a1420" text-anchor="middle">ameeco</text>
+  </svg>`;
+  return sharp(Buffer.from(svg)).png().toBuffer(); // PNG: rounded corners are genuinely transparent
+}
+
+// Simulates a tightly-framed studio product photo: the whole frame is the
+// cream backdrop plus the product, with nothing extra around it for BiRefNet
+// to key out — the "opacity ratio near 100%" case from the AMEECO test.
+async function fakeTightStudioPhoto(): Promise<Buffer> {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900">
+    <rect width="900" height="900" fill="#F0E6D8"/>
+    <circle cx="450" cy="470" r="220" fill="#8a5a2b"/>
+    <circle cx="380" cy="410" r="30" fill="#3d2410"/>
+    <circle cx="520" cy="520" r="25" fill="#3d2410"/>
+  </svg>`;
+  return sharp(Buffer.from(svg)).jpeg().toBuffer();
 }
 
 async function fakeBackground(): Promise<Buffer> {
@@ -97,6 +125,38 @@ async function fakeProductPhoto(): Promise<Buffer> {
   const d = await buildPromoPost({ ...base, logoBuffer: lockup, backgroundBuffer: bg, backgroundTone: "dark",
     layoutId: "text_left_product_right", fontPairingId: "modern_geometric" });
   fs.writeFileSync(path.join(OUT, "smoke_lockup_logo.jpg"), d);
+
+  // ── Regression checks for the AMEECO failure ────────────────────────────────
+
+  // 1. Rounded-card logo WITHOUT a hint (old pixel-only path) — documents the
+  //    failure mode: aspect ~1.27 and rounded-corner transparency can both fool
+  //    the pixel heuristic into leaving the pink card + baked-in text untouched.
+  const roundedCard = await fakeRoundedCardLogo();
+  const e1 = await buildPromoPost({ ...base, logoBuffer: roundedCard, backgroundBuffer: bg, backgroundTone: "dark",
+    layoutId: "centered_hero", fontPairingId: "friendly_rounded" });
+  fs.writeFileSync(path.join(OUT, "smoke_roundedcard_NO_HINT.jpg"), e1);
+
+  // 2. Same logo, WITH the GPT hint a real run would get — background should be
+  //    keyed transparent and the separate name/tagline should be suppressed.
+  const e2 = await buildPromoPost({ ...base, logoBuffer: roundedCard,
+    logoHint: { hasBakedInText: true, backgroundStyle: "flat_color" },
+    backgroundBuffer: bg, backgroundTone: "dark",
+    layoutId: "centered_hero", fontPairingId: "friendly_rounded" });
+  fs.writeFileSync(path.join(OUT, "smoke_roundedcard_WITH_HINT.jpg"), e2);
+
+  // 3. Tight studio product photo (whole frame is backdrop + product, nothing
+  //    for BiRefNet to remove) — verify tryAutoKeyFlatBackground alone isolates
+  //    the product. This is the controller's fallback path, tested directly
+  //    since this script has no BiRefNet/network access.
+  const tightPhoto = await fakeTightStudioPhoto();
+  const beforeOpacity = await opacityRatio(await sharp(tightPhoto).ensureAlpha().png().toBuffer());
+  const keyed = await tryAutoKeyFlatBackground(await sharp(tightPhoto).ensureAlpha().png().toBuffer());
+  console.log(`tight-studio-photo: opacity before=${(beforeOpacity * 100).toFixed(1)}% keyed=${keyed ? "yes" : "no (rejected)"}`);
+  if (keyed) {
+    const afterOpacity = await opacityRatio(keyed);
+    console.log(`  opacity after key=${(afterOpacity * 100).toFixed(1)}% (should be well under 100%)`);
+    fs.writeFileSync(path.join(OUT, "smoke_corner_keyed_product.png"), keyed);
+  }
 
   console.log("written to", OUT);
 })().catch((e) => { console.error(e); process.exit(1); });
