@@ -156,8 +156,8 @@ export const LAYOUTS: Record<LayoutId, Layout> = {
     brand:   { x: 60,  y: 56,  align: "left", maxLogoH: 130 },
     text:    { x: 60,  y: 330, w: 440, h: 440, align: "left" },
     product: { x: 530, y: 140, w: 500, h: 720 },
-    trust:   { x: 48,  y: 880, w: 560, align: "left" },
-    signoff: { x: 1020, y: 955, align: "right", shareTrustRow: true },
+    trust:   { x: 40,  y: 880, w: 1000, align: "center" },
+    signoff: null,
     shade:   "left",
   },
   text_right_product_left: {
@@ -165,8 +165,8 @@ export const LAYOUTS: Record<LayoutId, Layout> = {
     brand:   { x: 1020, y: 56, align: "right", maxLogoH: 130 },
     text:    { x: 580, y: 330, w: 440, h: 440, align: "right" },
     product: { x: 50,  y: 140, w: 500, h: 720 },
-    trust:   { x: 540, y: 880, w: 500, align: "left" },
-    signoff: { x: 60,  y: 955, align: "left", shareTrustRow: true },
+    trust:   { x: 40,  y: 880, w: 1000, align: "center" },
+    signoff: null,
     shade:   "right",
   },
   text_top_product_bottom: {
@@ -175,7 +175,7 @@ export const LAYOUTS: Record<LayoutId, Layout> = {
     text:    { x: 60,  y: 180, w: 960, h: 230, align: "left" },
     product: { x: 200, y: 420, w: 680, h: 460 },
     trust:   { x: 40,  y: 920, w: 1000, align: "center" },
-    signoff: { x: 1020, y: 100, align: "right" },
+    signoff: null,
     shade:   "top",
   },
   centered_hero: {
@@ -213,6 +213,7 @@ export const INDUSTRY_SCENES: Record<string, Record<string, string>> = {
     warm:     "light oak wooden surface against a warm plaster wall, golden light",
     urban:    "dark charcoal studio with a single soft spotlight pool, cinematic",
     natural:  "natural linen textile with dried grass stems at the edge, soft daylight",
+    heritage: "warm carved wooden shelf with a softly blurred marble backdrop, gentle golden diya-like glow",
   },
 };
 
@@ -247,6 +248,7 @@ export const ICON_IDS = [
   "circle-check", "heart", "infinity", "star", "gift", "lock", "hand", "hammer", "feather",
   "leaf", "flower-2", "sun", "droplets", "flame", "zap", "recycle", "package", "truck",
   "coffee", "cake", "croissant", "utensils", "wheat",
+  "landmark", "hand-heart", "flame-kindling",
 ] as const;
 
 export type IconId = (typeof ICON_IDS)[number];

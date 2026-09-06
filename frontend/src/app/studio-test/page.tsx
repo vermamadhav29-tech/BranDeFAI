@@ -14,20 +14,27 @@ import { useState, useRef, useCallback, type FormEvent, type ChangeEvent } from 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface CreativeAnalysis {
-  productType:    string;
-  placementNotes: string;
-  postType:       "lifestyle" | "product_highlight";
-  storyAngle:     string;
-  headline:       string;
-  accentLine?:    string;
-  subheadline:    string;
-  cta:            string;
-  trustBullets:   string[];
-  trustIcons?:    string[];
-  orientation?:   string;
-  layoutId?:      string;
-  fontPairingId?: string;
-  sceneMood?:     string;
+  productType:       string;
+  placementNotes:    string;
+  postType:          "lifestyle" | "product_highlight";
+  storyAngle:        string;
+  headline:          string;
+  accentLine?:       string;
+  subheadline:       string;
+  cta:               string;
+  trustBullets:      string[];
+  trustIcons?:       string[];
+  orientation?:      string;
+  layoutId?:         string;
+  fontPairingId?:    string;
+  sceneMood?:        string;
+  sceneDescription?: string;
+}
+
+interface DerivedColors {
+  primary: string;
+  accent:  string;
+  source:  "logo" | "product" | "default";
 }
 
 interface ResponseData {
@@ -35,8 +42,9 @@ interface ResponseData {
   logoUrl?: string;
   bgRemovalPath?: "cutout" | "fallback";
   compositedUrl: string;
-  backgroundId?: string;
+  backgroundSource?: string;
   backgroundTone?: string;
+  derivedColors?: DerivedColors;
   templateId?: string;
   creativeAnalysis?: CreativeAnalysis;
   logs: string[];
@@ -176,7 +184,7 @@ function Spinner({ stage }: { stage: string }) {
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       <p style={{ margin: 0, fontWeight: 600, color: "#aaa" }}>{stage}</p>
       <p style={{ margin: "8px 0 0", fontSize: 13 }}>
-        60–90 seconds — deep product inspection → creative brief → compositing
+        60–150 seconds — product inspection → creative brief → live backdrop generation → compositing
       </p>
     </div>
   );
@@ -189,8 +197,6 @@ export default function StudioTestPage() {
   const [brandTagline, setBrandTagline] = useState("Crafted with love, worn forever");
   const [industry,     setIndustry]     = useState<string>("jewellery");
   const [tone,         setTone]         = useState("Luxury, Elegant, Premium");
-  const [primaryColor, setPrimaryColor] = useState("#1A7A4A");
-  const [accentColor,  setAccentColor]  = useState("#FFD700");
   const [productFile,    setProductFile]    = useState<File | null>(null);
   const [productPreview, setProductPreview] = useState<string | null>(null);
   const [logoFile,       setLogoFile]       = useState<File | null>(null);
@@ -238,8 +244,6 @@ export default function StudioTestPage() {
         form.append("brandTagline",  brandTagline.trim());
         form.append("industry",      industry);
         form.append("tone",          tone.trim());
-        form.append("primaryColor",  primaryColor);
-        form.append("accentColor",   accentColor);
         form.append("testSessionId", testSessionId);
         form.append("image", productFile, productFile.name);
         // Logo is optional — backend shows brand initials if absent
@@ -272,7 +276,7 @@ export default function StudioTestPage() {
         setLoading(false);
       }
     },
-    [brandName, brandTagline, industry, tone, primaryColor, accentColor, productFile, logoFile],
+    [brandName, brandTagline, industry, tone, productFile, logoFile],
   );
 
   return (
@@ -292,7 +296,7 @@ export default function StudioTestPage() {
             Studio Test
           </h1>
           <p style={{ color: "#555", fontSize: 13, margin: 0 }}>
-            Isolated pipeline · Blurred-original backdrop · BiRefNet + GPT-4o
+            Isolated pipeline · Live-generated backdrop · BiRefNet + GPT-4o · Auto colour detection
           </p>
         </div>
 
@@ -353,64 +357,10 @@ export default function StudioTestPage() {
               />
             </div>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: 14,
-              }}
-            >
-              <div>
-                <label style={S.label}>Primary Color</label>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <input
-                    type="color"
-                    value={primaryColor}
-                    onChange={(e) => setPrimaryColor(e.target.value)}
-                    style={{
-                      width: 40,
-                      height: 36,
-                      border: "none",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      background: "none",
-                      padding: 0,
-                    }}
-                  />
-                  <input
-                    value={primaryColor}
-                    onChange={(e) => setPrimaryColor(e.target.value)}
-                    style={{ ...S.input, flex: 1 }}
-                    placeholder="#1A7A4A"
-                  />
-                </div>
-              </div>
-              <div>
-                <label style={S.label}>Accent Color</label>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <input
-                    type="color"
-                    value={accentColor}
-                    onChange={(e) => setAccentColor(e.target.value)}
-                    style={{
-                      width: 40,
-                      height: 36,
-                      border: "none",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      background: "none",
-                      padding: 0,
-                    }}
-                  />
-                  <input
-                    value={accentColor}
-                    onChange={(e) => setAccentColor(e.target.value)}
-                    style={{ ...S.input, flex: 1 }}
-                    placeholder="#FFD700"
-                  />
-                </div>
-              </div>
-            </div>
+            <p style={{ fontSize: 12, color: "#8a8a8a", margin: "2px 0 0" }}>
+              Brand colours are auto-detected from the logo (or the product itself if the logo is
+              black/white line art) — see the &quot;Colors&quot; row in the result panel.
+            </p>
           </div>
 
           {/* Right: upload boxes (product + logo) + submit */}
@@ -606,10 +556,16 @@ export default function StudioTestPage() {
                   {response.data.creativeAnalysis.fontPairingId && (
                     <Meta label="Fonts" value={response.data.creativeAnalysis.fontPairingId} />
                   )}
-                  {response.data.creativeAnalysis.sceneMood && (
+                  {response.data.creativeAnalysis.sceneDescription && (
                     <Meta
                       label="Backdrop"
-                      value={`${response.data.creativeAnalysis.sceneMood}${response.data.backgroundId ? ` → ${response.data.backgroundId}` : " → fallback (no library)"}`}
+                      value={`${response.data.creativeAnalysis.sceneDescription} — [${response.data.backgroundSource ?? "?"}, ${response.data.backgroundTone ?? "?"}]`}
+                    />
+                  )}
+                  {response.data.derivedColors && (
+                    <Meta
+                      label="Colors"
+                      value={`${response.data.derivedColors.primary} / ${response.data.derivedColors.accent} (from ${response.data.derivedColors.source})`}
                     />
                   )}
                   <Meta label="Story Angle"  value={response.data.creativeAnalysis.storyAngle} />

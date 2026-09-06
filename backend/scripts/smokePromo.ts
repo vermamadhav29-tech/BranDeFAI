@@ -28,6 +28,19 @@ async function fakeLogo(): Promise<Buffer> {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
+// Simulates a real-world "lockup" logo: flat white background (uniform corners,
+// so it should auto-key), a black mark, and text-like bars (baked-in brand name) —
+// this should suppress the separate name/tagline draw once auto-keyed.
+async function fakeLockupLogo(): Promise<Buffer> {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="420" height="200">
+    <rect width="420" height="200" fill="#ffffff"/>
+    <rect x="160" y="30" width="100" height="60" fill="#111111"/>
+    <rect x="90" y="120" width="240" height="14" fill="#333333"/>
+    <rect x="130" y="145" width="160" height="10" fill="#666666"/>
+  </svg>`;
+  return sharp(Buffer.from(svg)).jpeg().toBuffer(); // JPEG: no alpha at all, forces the opaque path
+}
+
 async function fakeBackground(): Promise<Buffer> {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080">
     <defs><radialGradient id="r" cx="0.7" cy="0.45" r="0.8">
@@ -77,6 +90,13 @@ async function fakeProductPhoto(): Promise<Buffer> {
     fs.writeFileSync(path.join(OUT, `smoke_real_${item.id}.jpg`), c);
     console.log("real backdrop:", item.id, item.tone);
   }
+
+  // Opaque "lockup" logo — should auto-key its flat white background off,
+  // and suppress the separate brand-name text since the mark carries a name already.
+  const lockup = await fakeLockupLogo();
+  const d = await buildPromoPost({ ...base, logoBuffer: lockup, backgroundBuffer: bg, backgroundTone: "dark",
+    layoutId: "text_left_product_right", fontPairingId: "modern_geometric" });
+  fs.writeFileSync(path.join(OUT, "smoke_lockup_logo.jpg"), d);
 
   console.log("written to", OUT);
 })().catch((e) => { console.error(e); process.exit(1); });

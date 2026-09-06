@@ -2,11 +2,12 @@
  * studioTestAssets.ts — pixel-level helpers for the promo renderer.
  *
  *   renderIcon()            Lucide SVG → tinted PNG
- *   prepareLogo()           analyse logo, make it read on the backdrop (mono silhouette / card)
+ *   refineCutout()          erode BiRefNet's contaminated edge pixels off a cutout
+ *   prepareLogo()           auto-remove a flat logo background, or fall back to a card
  *   buildShadowLayer()      soft contact shadow from the cutout's alpha
  *   shadeSvg()              legibility gradient over the text zone
  *   spotlightSvg()          soft radial light behind the product
- *   buildPremiumBackdrop()  fallback backdrop when no library background is available
+ *   buildPremiumBackdrop()  fallback backdrop when no generated/library background is available
  *   roundRect()             canvas path helper
  */
 
@@ -93,20 +94,119 @@ export async function renderIcon(iconId: string, size: number, color: string): P
   return png;
 }
 
+// ─── Cutout refinement ────────────────────────────────────────────────────────
+
+/**
+ * BiRefNet's semi-transparent edge pixels retain a blend of the original
+ * background's colour (classic alpha-matting fringing) — around fine detail
+ * like filigree or lattice-work this shows up as a visible halo once the
+ * cutout sits on a different backdrop. Fix: shrink the alpha mask inward by
+ * ~2px so the contaminated boundary band becomes fully transparent instead
+ * of partially visible with the wrong colour, then re-soften the new edge.
+ */
+export async function refineCutout(buf: Buffer, log?: Logger): Promise<Buffer> {
+  try {
+    const meta = await sharp(buf).metadata();
+    if (!meta.width || !meta.height) return buf;
+
+    const alphaRaw = await sharp(buf).ensureAlpha().extractChannel(3).png().toBuffer();
+
+    // blur softens the edge → steep ramp culls the contaminated band (erosion) →
+    // light re-blur restores clean anti-aliasing on the now-uncontaminated edge.
+    const erodedAlpha = await sharp(alphaRaw)
+      .blur(2)
+      .linear(3.4, -540)
+      .blur(0.6)
+      .png()
+      .toBuffer();
+
+    const rgb = await sharp(buf).ensureAlpha().removeAlpha().png().toBuffer();
+
+    return await sharp(rgb).joinChannel(erodedAlpha).png().toBuffer();
+  } catch (err) {
+    log?.(`[cutout] refine failed, using raw cutout: ${err instanceof Error ? err.message : String(err)}`);
+    return buf;
+  }
+}
+
 // ─── Logo preparation ─────────────────────────────────────────────────────────
+
+type Logger = (msg: string) => void;
+
+export interface PreparedLogo {
+  png: Buffer;
+  onCard: boolean;        // true = couldn't clean it; shown on a plain backing card
+  isFullLockup: boolean;  // true = treat as a complete brand mark (name likely baked in) — suppress separate name text
+}
+
+function colorDist(a: [number, number, number], b: [number, number, number]): number {
+  return Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2);
+}
+
+async function averageColor(buf: Buffer): Promise<[number, number, number]> {
+  const { data, info } = await sharp(buf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const ch = info.channels;
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let p = 0; p + ch - 1 < data.length; p += ch) { r += data[p]; g += data[p + 1]; b += data[p + 2]; n++; }
+  return n ? [r / n, g / n, b / n] : [255, 255, 255];
+}
+
+/**
+ * Many "opaque" logos are just a flat-colour (usually white) background behind
+ * the mark. Sample the four corners; if they agree, key that colour out via a
+ * soft alpha threshold instead of caging the whole file on a card. Returns
+ * null if the corners disagree (photographic/gradient background) or the
+ * result is implausible (near-empty or near-solid).
+ */
+async function tryAutoKeyLogoBackground(png: Buffer): Promise<Buffer | null> {
+  const meta = await sharp(png).metadata();
+  const w = meta.width ?? 0, h = meta.height ?? 0;
+  if (!w || !h || w < 20 || h < 20) return null;
+
+  const s = Math.max(4, Math.round(Math.min(w, h) * 0.06));
+  const corners = await Promise.all(
+    [[0, 0], [w - s, 0], [0, h - s], [w - s, h - s]].map(([x, y]) =>
+      sharp(png).extract({ left: x, top: y, width: s, height: s }).png().toBuffer().then(averageColor),
+    ),
+  );
+  const bg = corners[0];
+  if (Math.max(...corners.map((c) => colorDist(c, bg))) > 22) return null; // corners disagree
+
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const ch = info.channels;
+  const alpha = Buffer.alloc(w * h);
+  const LOW = 18, HIGH = 55; // soft threshold band for anti-aliased edges
+  for (let i = 0, p = 0; p + ch - 1 < data.length; p += ch, i++) {
+    const d = colorDist([data[p], data[p + 1], data[p + 2]], bg);
+    alpha[i] = d <= LOW ? 0 : d >= HIGH ? 255 : Math.round(((d - LOW) / (HIGH - LOW)) * 255);
+  }
+
+  const opaqueRatio = alpha.reduce((sum, v) => sum + (v > 128 ? 1 : 0), 0) / alpha.length;
+  if (opaqueRatio < 0.02 || opaqueRatio > 0.92) return null; // implausible: essentially empty or essentially solid
+
+  const alphaImg = await sharp(alpha, { raw: { width: w, height: h, channels: 1 } }).blur(0.5).png().toBuffer();
+  const rgbImg   = await sharp(png).removeAlpha().png().toBuffer();
+  return sharp(rgbImg).joinChannel(alphaImg).png().toBuffer();
+}
 
 /**
  * Makes the logo legible on the backdrop:
- *   transparent logo whose ink fights the tone  → monochrome silhouette in the text colour
- *   transparent logo that already reads          → unchanged
- *   opaque logo (JPEG / white box)               → unchanged, caller draws it on a small card
+ *   transparent logo whose ink fights the tone → monochrome silhouette in the text colour
+ *   transparent logo that already reads         → unchanged
+ *   opaque logo with a flat background          → auto-keyed transparent (background removed)
+ *   opaque logo, background can't be auto-keyed → drawn on a small card, treated as a full lockup
  */
-export async function prepareLogo(
-  logo: Buffer,
-  tone: Tone,
-): Promise<{ png: Buffer; onCard: boolean }> {
+export async function prepareLogo(logo: Buffer, tone: Tone): Promise<PreparedLogo> {
   const base = sharp(logo).ensureAlpha();
   const png  = await base.png().toBuffer();
+
+  // Whether the file carries a baked-in wordmark/tagline is independent of whether
+  // we can clean its background — judge it by shape instead: icon-only marks are
+  // roughly square, while a mark + name (+ tagline) needs a wide or tall canvas.
+  const dims   = await sharp(png).metadata();
+  const aspect = (dims.width ?? 1) / (dims.height ?? 1);
+  const isFullLockup = aspect > 1.6 || aspect < 0.6;
+
   const { data, info } = await sharp(png)
     .resize(160, 160, { fit: "inside" })
     .raw()
@@ -123,21 +223,24 @@ export async function prepareLogo(
   const transparentRatio = 1 - opaque / total;
   const inkLum = opaque ? lumSum / opaque : 0.5;
 
-  if (transparentRatio < 0.12) return { png, onCard: true };
+  if (transparentRatio < 0.12) {
+    const keyed = await tryAutoKeyLogoBackground(png).catch(() => null);
+    if (keyed) return { png: keyed, onCard: false, isFullLockup };
+    return { png, onCard: true, isFullLockup: true }; // couldn't clean at all — play it safe
+  }
 
   const fights = (tone === "dark" && inkLum < 0.45) || (tone === "light" && inkLum > 0.62);
-  if (!fights) return { png, onCard: false };
+  if (!fights) return { png, onCard: false, isFullLockup };
 
-  const meta = await sharp(png).metadata();
   const fill = tone === "dark" ? { r: 255, g: 255, b: 255, alpha: 1 } : { r: 22, g: 22, b: 22, alpha: 1 };
   const silhouette = await sharp({
-    create: { width: meta.width!, height: meta.height!, channels: 4, background: fill },
+    create: { width: dims.width!, height: dims.height!, channels: 4, background: fill },
   })
     .composite([{ input: png, blend: "dest-in" }])
     .png()
     .toBuffer();
 
-  return { png: silhouette, onCard: false };
+  return { png: silhouette, onCard: false, isFullLockup };
 }
 
 // ─── Contact shadow ───────────────────────────────────────────────────────────

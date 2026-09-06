@@ -16,7 +16,7 @@ import {
 import { fitText, drawLines, drawTracked, measureTracked, type Ctx2D, type FitResult } from "./typeEngine";
 import {
   buildPremiumBackdrop, buildShadowLayer, shadeSvg, spotlightSvg,
-  renderIcon, prepareLogo, roundRect, resolveAccent, type Tone,
+  renderIcon, prepareLogo, refineCutout, roundRect, resolveAccent, type Tone,
 } from "./studioTestAssets";
 
 registerAllFonts();
@@ -61,8 +61,11 @@ export async function buildPromoPost(i: PromoInput): Promise<Buffer> {
 
   i.log(`[promo] layout=${L.id} fonts=${P.display}/${P.body} tone=${tone} accent=${accent}`);
 
-  // ── 1. Fit product into its region ─────────────────────────────────────────
-  const meta   = await sharp(i.cutoutBuffer).metadata();
+  // ── 1. Refine + fit product into its region ──────────────────────────────────
+  // refineCutout erodes BiRefNet's colour-contaminated edge pixels before anything
+  // else touches the cutout, so the resize/shadow/composite steps all use clean edges.
+  const refinedCutout = await refineCutout(i.cutoutBuffer, i.log);
+  const meta   = await sharp(refinedCutout).metadata();
   const cW     = meta.width  ?? 600;
   const cH     = meta.height ?? 600;
   const scale  = Math.min(L.product.w / cW, L.product.h / cH);
@@ -72,7 +75,7 @@ export async function buildPromoPost(i: PromoInput): Promise<Buffer> {
   const py     = Math.round(L.product.y + (L.product.h - ph) / 2);
   const pcx    = px + pw / 2;
   const pcy    = py + ph / 2;
-  const cutout = await sharp(i.cutoutBuffer).resize(pw, ph).png().toBuffer();
+  const cutout = await sharp(refinedCutout).resize(pw, ph).png().toBuffer();
   i.log(`[promo] product ${pw}×${ph} at (${px},${py})`);
 
   // ── 2. Backdrop + legibility shade + spotlight ─────────────────────────────
@@ -108,10 +111,14 @@ export async function buildPromoPost(i: PromoInput): Promise<Buffer> {
   const B      = L.brand;
   let   by     = B.y;
   let   hasLogo = false;
+  // A logo we couldn't clean (opaque, no auto-keyable flat background) is drawn
+  // as-is on a card — that almost always means it's a full lockup with the brand
+  // name already baked into the image, so drawing the name again is redundant.
+  let   suppressName = false;
 
   if (i.logoBuffer) {
     try {
-      const { png, onCard } = await prepareLogo(i.logoBuffer, tone);
+      const { png, onCard, isFullLockup } = await prepareLogo(i.logoBuffer, tone);
       const img  = await loadImage(png);
       const s    = Math.min(260 / img.width, B.maxLogoH / img.height);
       const lw   = img.width * s;
@@ -125,29 +132,32 @@ export async function buildPromoPost(i: PromoInput): Promise<Buffer> {
       ctx.drawImage(img, lx, by, lw, lh);
       by += lh + 18;
       hasLogo = true;
+      suppressName = isFullLockup;
     } catch (e) {
       i.log(`[promo] logo failed: ${e instanceof Error ? e.message : e}`);
     }
   }
 
-  setShadow(true);
-  const name     = i.brandName.toUpperCase();
-  let   nameSize = hasLogo ? 26 : 40;
-  let   tracking = P.tracking;
-  ctx.fillStyle    = textCol;
-  ctx.textBaseline = "top";
-  ctx.font         = dFont(nameSize);
-  while (measureTracked(ctx, name, tracking) > 320 && (tracking > 1 || nameSize > 20)) {
-    if (tracking > 1) tracking -= 1; else { nameSize -= 1; ctx.font = dFont(nameSize); }
-  }
-  drawTracked(ctx, name, B.x, by, tracking, B.align);
-  by += nameSize + 8;
+  if (!suppressName) {
+    setShadow(true);
+    const name     = i.brandName.toUpperCase();
+    let   nameSize = hasLogo ? 26 : 40;
+    let   tracking = P.tracking;
+    ctx.fillStyle    = textCol;
+    ctx.textBaseline = "top";
+    ctx.font         = dFont(nameSize);
+    while (measureTracked(ctx, name, tracking) > 320 && (tracking > 1 || nameSize > 20)) {
+      if (tracking > 1) tracking -= 1; else { nameSize -= 1; ctx.font = dFont(nameSize); }
+    }
+    drawTracked(ctx, name, B.x, by, tracking, B.align);
+    by += nameSize + 8;
 
-  if (!L.signoff && i.brandTagline) {
-    ctx.fillStyle = accent;
-    ctx.font      = dFont(18, P.italicAccent, "normal");
-    ctx.textAlign = B.align;
-    ctx.fillText(i.brandTagline, B.x, by);
+    if (!L.signoff && i.brandTagline) {
+      ctx.fillStyle = accent;
+      ctx.font      = dFont(18, P.italicAccent, "normal");
+      ctx.textAlign = B.align;
+      ctx.fillText(i.brandTagline, B.x, by);
+    }
   }
 
   // Text block ------------------------------------------------------------------

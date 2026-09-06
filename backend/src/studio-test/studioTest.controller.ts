@@ -16,7 +16,10 @@ import Redis from "ioredis";
 import sharp from "sharp";
 import { buildPromoPost } from "./studioTestPromo";
 import { removeBackground } from "./backgroundRemoval";
-import { pickBackground, fetchBackground, type BackgroundItem } from "./backgroundLibrary";
+import { pickBackground, fetchBackground, analyseTone } from "./backgroundLibrary";
+import { generateLiveBackdrop } from "./backgroundGenerator";
+import { deriveBrandColors } from "./colorExtraction";
+import type { Tone } from "./studioTestAssets";
 import type { LayoutId } from "./designSystem";
 import {
   analyzeCreative,
@@ -136,8 +139,6 @@ export async function handleStudioTestGenerate(
       brandName,
       industry,
       tone,
-      primaryColor,
-      accentColor,
       brandTagline: rawTagline,
       locale: rawLocale,
       testSessionId: rawSessionId,
@@ -145,8 +146,6 @@ export async function handleStudioTestGenerate(
       brandName?:    string;
       industry?:     string;
       tone?:         string;
-      primaryColor?: string;
-      accentColor?:  string;
       brandTagline?: string;
       locale?:       string;
       testSessionId?: string;
@@ -192,7 +191,7 @@ export async function handleStudioTestGenerate(
         imageUrl:  productImageUrl,
         brandName,
         brandTone: tone.split(",").map((s) => s.trim()).filter(Boolean),
-        brandHex:  [primaryColor, accentColor].filter((c): c is string => Boolean(c)),
+        brandHex:  [], // colours are auto-derived from the logo/product post-analysis, not user-picked
         industry,
         locale,
         log,
@@ -236,24 +235,7 @@ export async function handleStudioTestGenerate(
       }
     } catch (_) { /* keep AI layout */ }
 
-    // ── 3c. Pre-rendered backdrop from the library ─────────────────────────────
-    let background: BackgroundItem | null = null;
-    let backgroundBuffer: Buffer | undefined;
-    try {
-      background = pickBackground(industry, analysis.sceneMood);
-      if (background) {
-        backgroundBuffer = await fetchBackground(background);
-        log(`[studio-test] backdrop ${background.id} (${background.tone}, ${background.dominant})`);
-      } else {
-        log(`[studio-test] no library backdrop for industry="${industry}" mood="${analysis.sceneMood}" — using blurred-photo fallback`);
-      }
-    } catch (err) {
-      log(`[studio-test] backdrop fetch failed: ${err instanceof Error ? err.message : String(err)} — using fallback`);
-      background = null;
-      backgroundBuffer = undefined;
-    }
-
-    // ── 4. Optional logo ──────────────────────────────────────────────────
+    // ── 3c. Optional logo (moved up — colour derivation needs it) ──────────────
     let logoBuffer: Buffer | undefined;
     let logoUrl: string | undefined;
     if (logoFile) {
@@ -262,7 +244,40 @@ export async function handleStudioTestGenerate(
       logoBuffer = logoFile.buffer;
       log(`[studio-test] logo uploaded: ${logoUrl} (${logoFile.buffer.length} bytes)`);
     } else {
-      log("[studio-test] no logo provided — brand initials will be shown in circle");
+      log("[studio-test] no logo provided — brand initials will be shown");
+    }
+
+    // ── 3d. Auto-derive brand colours from the logo, or fall back to the product ──
+    const derivedColors = await deriveBrandColors(logoBuffer, cutoutBuffer, log);
+
+    // ── 3e. Backdrop: generate live from the Art Director's bespoke scene;
+    //        fall back to the pre-rendered library, then to a blurred-photo backdrop.
+    let backgroundBuffer: Buffer | undefined;
+    let backgroundTone: Tone = "dark";
+    let backgroundSource = "fallback";
+
+    try {
+      const liveRaw = await generateLiveBackdrop(analysis.sceneDescription, log);
+      backgroundBuffer = await sharp(liveRaw).resize(1080, 1080, { fit: "cover", position: "centre" }).png().toBuffer();
+      const toneInfo = await analyseTone(backgroundBuffer);
+      backgroundTone   = toneInfo.tone;
+      backgroundSource = "live";
+      log(`[studio-test] live backdrop ready — tone=${toneInfo.tone} dominant=${toneInfo.dominant}`);
+    } catch (err) {
+      log(`[studio-test] live backdrop failed: ${err instanceof Error ? err.message : String(err)} — trying library`);
+      try {
+        const item = pickBackground(industry, analysis.sceneMood);
+        if (item) {
+          backgroundBuffer = await fetchBackground(item);
+          backgroundTone   = item.tone;
+          backgroundSource = `library:${item.id}`;
+          log(`[studio-test] library backdrop ${item.id} (${item.tone}, ${item.dominant})`);
+        } else {
+          log(`[studio-test] no library backdrop for industry="${industry}" mood="${analysis.sceneMood}" — using blurred-photo fallback`);
+        }
+      } catch (err2) {
+        log(`[studio-test] library backdrop also failed: ${err2 instanceof Error ? err2.message : String(err2)} — using blurred-photo fallback`);
+      }
     }
 
     // ── 5. Template rotation (Redis-backed, drives postType-aware variety) ─
@@ -284,7 +299,7 @@ export async function handleStudioTestGenerate(
       cutoutBuffer,
       logoBuffer,
       backgroundBuffer,
-      backgroundTone:   background?.tone ?? "dark",
+      backgroundTone,
       brandName,
       brandTagline,
       headline:         analysis.headline,
@@ -293,8 +308,8 @@ export async function handleStudioTestGenerate(
       cta:              analysis.cta,
       trustBullets:     analysis.trustBullets,
       trustIcons:       analysis.trustIcons,
-      primaryColor:     primaryColor || "#1A7A4A",
-      accentColor:      accentColor  || "#FFD700",
+      primaryColor:     derivedColors.primary,
+      accentColor:      derivedColors.accent,
       layoutId,
       fontPairingId:    analysis.fontPairingId,
       log,
@@ -315,8 +330,9 @@ export async function handleStudioTestGenerate(
         bgRemovalPath,
         compositedUrl,
         creativeAnalysis: { ...analysis, layoutId },
-        backgroundId:   background?.id,
-        backgroundTone: background?.tone,
+        backgroundSource,
+        backgroundTone,
+        derivedColors,
         templateId,
         logs,
       },

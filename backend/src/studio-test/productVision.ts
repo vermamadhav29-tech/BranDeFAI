@@ -30,20 +30,21 @@ export type PostType    = "lifestyle" | "product_highlight";
 export type Orientation = "tall" | "wide" | "square";
 
 export interface CreativeAnalysis {
-  productType:    string;   // free text, industry-appropriate: "drop earrings", "chocolate lava cake", "ceramic diffuser"
-  orientation:    Orientation;
-  placementNotes: string;
-  postType:       PostType;
-  storyAngle:     string;
-  headline:       string;
-  accentLine:     string;
-  subheadline:    string;
-  cta:            string;
-  trustBullets:   string[];
-  trustIcons:     string[];
-  layoutId:       LayoutId;
-  fontPairingId:  FontPairingId;
-  sceneMood:      string;
+  productType:      string;   // free text, industry-appropriate: "drop earrings", "chocolate lava cake", "ceramic diffuser"
+  orientation:      Orientation;
+  placementNotes:   string;
+  postType:         PostType;
+  storyAngle:        string;
+  headline:          string;
+  accentLine:        string;
+  subheadline:       string;
+  cta:               string;
+  trustBullets:      string[];
+  trustIcons:        string[];
+  layoutId:          LayoutId;
+  fontPairingId:     FontPairingId;
+  sceneMood:         string;   // fallback tag for the pre-rendered library, used if live generation fails
+  sceneDescription:  string;   // bespoke backdrop description, drives live Flux generation
 }
 
 // ─── Private types ────────────────────────────────────────────────────────────
@@ -63,17 +64,18 @@ interface ProductInspection {
 }
 
 interface CreativeBrief {
-  postType:      PostType;
-  layoutId:      LayoutId;
-  fontPairingId: FontPairingId;
-  sceneMood:     string;
-  storyAngle:    string;
-  headline:      string;
-  accentLine:    string;
-  subheadline:   string;
-  cta:           string;
-  trustBullets:  { text: string; icon: string }[];
-  placementNotes: string;
+  postType:         PostType;
+  layoutId:         LayoutId;
+  fontPairingId:    FontPairingId;
+  sceneMood:        string;
+  sceneDescription: string;
+  storyAngle:       string;
+  headline:         string;
+  accentLine:       string;
+  subheadline:      string;
+  cta:              string;
+  trustBullets:     { text: string; icon: string }[];
+  placementNotes:   string;
 }
 
 const INSPECT_TIMEOUT_MS = 45_000;
@@ -106,7 +108,7 @@ export function inspectorSystemFor(industry: Industry): string {
     return `You are a pastry chef and food stylist analysing a product photograph with a chef's precision.
 Study the image tile by tile and document:
 
-1. PRODUCT TYPE — the specific dish/item (e.g. "chocolate lava cake", "strawberry tart", "cold brew latte")
+1. PRODUCT TYPE — the specific dish/item by its precise common name, e.g. "chocolate lava cake", "strawberry tart", "cold brew latte" — not a generic category like "dessert"
 2. MATERIALS — key visible ingredients and garnish (e.g. "70% dark chocolate", "fresh raspberries", "gold leaf", "salted caramel drizzle")
 3. FINISH — glaze / frosting texture / plating finish (e.g. "glossy ganache glaze", "dusted icing sugar", "matte fondant")
 4. DOMINANT COLOURS — 2–3 colour words that describe the dish
@@ -123,7 +125,10 @@ ${shared}`;
     return `You are a senior product designer and stylist analysing a product photograph with a design critic's eye.
 Study the image tile by tile and document:
 
-1. PRODUCT TYPE — the specific item (e.g. "ceramic desk diffuser", "canvas tote bag", "wireless earbuds case")
+1. PRODUCT TYPE — the specific item by its precise common name. If it depicts a deity, mythological or
+   religious figure, or a recognisable cultural motif, NAME IT PRECISELY (e.g. "Ram Darbar idol", "Ganesha
+   murti", "Buddha statue", "dragon figurine") — never default to a generic category like "decorative statue"
+   when the specific subject is identifiable
 2. MATERIALS — visible materials and components (e.g. "brushed aluminium", "full-grain leather", "recycled cotton canvas")
 3. FINISH — surface finish (e.g. "matte anodised", "soft-touch rubber", "hand-stitched edge")
 4. DOMINANT COLOURS — 2–3 colour words that describe the product
@@ -140,7 +145,10 @@ ${shared}`;
   return `You are a senior gemologist and luxury product analyst analysing a jewellery photograph with scientific precision.
 Study the image tile by tile and document:
 
-1. PRODUCT TYPE — the specific piece and, in parentheses, the body part it's worn on (e.g. "drop earrings (ear)", "cocktail ring (finger)"; use "none" if not wearable)
+1. PRODUCT TYPE — the specific piece and, in parentheses, the body part it's worn on (e.g. "drop earrings (ear)",
+   "cocktail ring (finger)"; use "none" if not wearable). If the piece depicts a deity, mythological figure, or
+   recognisable cultural/religious motif (e.g. a Krishna pendant, an Om charm), name it precisely instead of
+   defaulting to a generic description
 2. MATERIALS — metal (colour/tone/likely alloy: yellow/rose/white gold, sterling silver, oxidised silver, brass, platinum) AND every visible stone (colour, probable type, cut, setting) as separate entries
 3. FINISH — high-polish / brushed / hammered / oxidised / rhodium / textured / engraved
 4. DOMINANT COLOURS — 2–3 colour words (e.g. "rose gold", "white", "deep red")
@@ -156,17 +164,25 @@ ${shared}`;
 // ─── Stage 2 prompt ───────────────────────────────────────────────────────────
 
 function sceneGuidanceFor(industry: Industry): string {
-  if (industry === "food_desserts") {
-    return `SCENE   — pick the mood whose backdrop flatters the dish: warm bakes (caramel, chocolate, cinnamon) ` +
-      `→ rustic or warm; bright fruity/citrus/fresh items → bright; dark chocolate, coffee, moody plating → moody.`;
-  }
-  if (industry === "lifestyle") {
-    return `SCENE   — pick the mood that flatters the product: neutral/minimal products → minimal; wood, leather, ` +
-      `earthy tones → warm; bold or technical products → urban; natural/eco materials → natural.`;
-  }
-  return `SCENE   — pick the mood whose backdrop flatters the product's dominant colours: rose gold / pink stones ` +
-    `→ romantic or warm; silver / white stones → royal or classic or fresh; yellow gold → classic, emerald or warm; ` +
-    `colourful stones → classic (dark neutral) so stones pop.`;
+  const examples =
+    industry === "food_desserts"
+      ? `e.g. "dark walnut table, single shaft of warm afternoon light, faint steam" for a rich warm bake, or ` +
+        `"pale marble counter, bright diffused daylight, a few scattered citrus peels" for a fresh fruity dessert`
+      : industry === "lifestyle"
+      ? `e.g. "brushed concrete plinth, single soft studio spotlight, deep charcoal background" for a technical ` +
+        `product, or "warm oak shelf against a plastered wall, low golden-hour light" for an artisanal one — and ` +
+        `for devotional or cultural pieces, a temple-shelf or mandap-inspired scene: warm carved wood or marble, ` +
+        `soft diya-like glow`
+      : `e.g. "deep royal-blue silk pooling in soft folds, single dramatic spotlight" for a bold statement piece, ` +
+        `or "pale marble slab, soft window light, faint shadow" for a delicate everyday piece`;
+
+  return (
+    `SCENE   — write a bespoke, one-sentence backdrop description (12–22 words) for THIS specific product: ` +
+    `surface/material, lighting, mood — grounded in its actual colours, materials and story, not a generic ` +
+    `studio wall. It must describe an EMPTY surface/setting only — no props, no other objects, nothing that ` +
+    `could be confused with the product itself. ${examples}. Also pick the closest sceneMood tag from the menu ` +
+    `as a fallback label (used only if live generation of your description fails).`
+  );
 }
 
 function headlineGuidanceFor(industry: Industry, locale: string): string {
@@ -217,6 +233,7 @@ Return ONLY valid JSON with exactly these keys:
 {
   "postType": "lifestyle"|"product_highlight",
   "layoutId": "...", "fontPairingId": "...", "sceneMood": "...",
+  "sceneDescription": "12–22 word bespoke empty-backdrop description",
   "storyAngle": "3–6 words",
   "headline": "...", "accentLine": "...", "subheadline": "...", "cta": "...",
   "trustBullets": [{"text": "...", "icon": "..."}],
@@ -238,9 +255,10 @@ export const CREATIVE_FALLBACK: CreativeAnalysis = {
   cta:            "Shop Now",
   trustBullets:   [],
   trustIcons:     [],
-  layoutId:       "text_left_product_right",
-  fontPairingId:  "luxury_serif",
-  sceneMood:      "classic",
+  layoutId:         "text_left_product_right",
+  fontPairingId:    "luxury_serif",
+  sceneMood:        "classic",
+  sceneDescription: "black velvet fabric surface with a subtle sheen, dark moody vignette",
 };
 
 // ─── Validation ───────────────────────────────────────────────────────────────
@@ -366,16 +384,17 @@ async function generateBrief(
 
   return {
     postType,
-    layoutId:      (LAYOUT_IDS as string[]).includes(String(raw.layoutId)) ? (raw.layoutId as LayoutId) : "text_left_product_right",
-    fontPairingId: (FONT_PAIRING_IDS as string[]).includes(String(raw.fontPairingId)) ? (raw.fontPairingId as FontPairingId) : "luxury_serif",
-    sceneMood:     moods.includes(String(raw.sceneMood)) ? String(raw.sceneMood) : moods[0],
-    storyAngle:    str(raw.storyAngle, CREATIVE_FALLBACK.storyAngle),
-    headline:      str(raw.headline, CREATIVE_FALLBACK.headline),
-    accentLine:    typeof raw.accentLine === "string" ? raw.accentLine.trim() : "",
-    subheadline:   str(raw.subheadline, CREATIVE_FALLBACK.subheadline),
-    cta:           str(raw.cta, CREATIVE_FALLBACK.cta),
-    trustBullets:  postType === "product_highlight" ? trustBullets : [],
-    placementNotes: str(raw.placementNotes, CREATIVE_FALLBACK.placementNotes),
+    layoutId:         (LAYOUT_IDS as string[]).includes(String(raw.layoutId)) ? (raw.layoutId as LayoutId) : "text_left_product_right",
+    fontPairingId:    (FONT_PAIRING_IDS as string[]).includes(String(raw.fontPairingId)) ? (raw.fontPairingId as FontPairingId) : "luxury_serif",
+    sceneMood:        moods.includes(String(raw.sceneMood)) ? String(raw.sceneMood) : moods[0],
+    sceneDescription: str(raw.sceneDescription, CREATIVE_FALLBACK.sceneDescription),
+    storyAngle:       str(raw.storyAngle, CREATIVE_FALLBACK.storyAngle),
+    headline:         str(raw.headline, CREATIVE_FALLBACK.headline),
+    accentLine:       typeof raw.accentLine === "string" ? raw.accentLine.trim() : "",
+    subheadline:      str(raw.subheadline, CREATIVE_FALLBACK.subheadline),
+    cta:              str(raw.cta, CREATIVE_FALLBACK.cta),
+    trustBullets:     postType === "product_highlight" ? trustBullets : [],
+    placementNotes:   str(raw.placementNotes, CREATIVE_FALLBACK.placementNotes),
   };
 }
 
@@ -421,24 +440,25 @@ export async function analyzeCreative(input: {
     return { ...CREATIVE_FALLBACK, productType: inspection.productType, orientation: inspection.orientation };
   }
   log(
-    `[creative] Stage 2 done — layout=${brief.layoutId} fonts=${brief.fontPairingId} scene=${brief.sceneMood} ` +
-    `headline="${brief.headline}" accent="${brief.accentLine}" bullets=${JSON.stringify(brief.trustBullets)}`,
+    `[creative] Stage 2 done — layout=${brief.layoutId} fonts=${brief.fontPairingId} scene="${brief.sceneDescription}" ` +
+    `(fallback tag=${brief.sceneMood}) headline="${brief.headline}" accent="${brief.accentLine}" bullets=${JSON.stringify(brief.trustBullets)}`,
   );
 
   return {
-    productType:    inspection.productType,
-    orientation:    inspection.orientation,
-    placementNotes: brief.placementNotes,
-    postType:       brief.postType,
-    storyAngle:     brief.storyAngle,
-    headline:       brief.headline,
-    accentLine:     brief.accentLine,
-    subheadline:    brief.subheadline,
-    cta:            brief.cta,
-    trustBullets:   brief.trustBullets.map((b) => b.text),
-    trustIcons:     brief.trustBullets.map((b) => b.icon),
-    layoutId:       brief.layoutId,
-    fontPairingId:  brief.fontPairingId,
-    sceneMood:      brief.sceneMood,
+    productType:      inspection.productType,
+    orientation:      inspection.orientation,
+    placementNotes:   brief.placementNotes,
+    postType:         brief.postType,
+    storyAngle:       brief.storyAngle,
+    headline:         brief.headline,
+    accentLine:       brief.accentLine,
+    subheadline:      brief.subheadline,
+    cta:              brief.cta,
+    trustBullets:     brief.trustBullets.map((b) => b.text),
+    trustIcons:       brief.trustBullets.map((b) => b.icon),
+    layoutId:         brief.layoutId,
+    fontPairingId:    brief.fontPairingId,
+    sceneMood:        brief.sceneMood,
+    sceneDescription: brief.sceneDescription,
   };
 }
