@@ -1,13 +1,19 @@
 /**
- * productVision.ts — two-stage Creative Director.
+ * productVision.ts — two-stage Creative Director, branched per industry.
  *
  * Stage 1  Product Inspector  (GPT-4o vision, detail:"high")
- *          gemologist-grade read of the product: metal, stones, finish, style, USPs, orientation.
+ *          An industry-appropriate expert reads the product photo into a common
+ *          schema (productType, materials, finish, USPs, ...) so Stage 2 and the
+ *          renderer never need to know which industry they're looking at.
  *
  * Stage 2  Art Director       (GPT-4o text)
- *          picks from the design-system MENU (layout, font pairing, scene mood, icons)
- *          and writes copy grounded in the inspection. Rules live here; the renderer
- *          is deterministic, so the "if this then that" is enforced in code and validation.
+ *          picks from the design-system MENU (layout, font pairing, scene mood,
+ *          icons) and writes copy grounded in the inspection. Rules live here;
+ *          the renderer is deterministic, so the "if this then that" is enforced
+ *          in code + validation, not in an ever-longer prompt.
+ *
+ * Industries: must match designSystem.INDUSTRY_SCENES keys and
+ * services/promptTemplates/industryTemplates.ts industryKeys.
  */
 
 import {
@@ -19,14 +25,12 @@ type Logger = (msg: string) => void;
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
-export type JewelleryProductType = "necklace" | "bracelet" | "ring" | "earrings" | "other";
-export type BodyPart  = "neckline" | "wrist" | "finger" | "ear" | "none";
-export type PostType  = "lifestyle" | "product_highlight";
+export type Industry    = "jewellery" | "food_desserts" | "lifestyle";
+export type PostType    = "lifestyle" | "product_highlight";
 export type Orientation = "tall" | "wide" | "square";
 
 export interface CreativeAnalysis {
-  productType:    JewelleryProductType;
-  bodyPart:       BodyPart;
+  productType:    string;   // free text, industry-appropriate: "drop earrings", "chocolate lava cake", "ceramic diffuser"
   orientation:    Orientation;
   placementNotes: string;
   postType:       PostType;
@@ -45,19 +49,17 @@ export interface CreativeAnalysis {
 // ─── Private types ────────────────────────────────────────────────────────────
 
 interface ProductInspection {
-  jewelType:        JewelleryProductType;
-  bodyPart:         BodyPart;
+  productType:      string;    // e.g. "drop earrings" | "chocolate lava cake" | "ceramic desk diffuser"
   orientation:      Orientation;
-  metalType:        string;
-  metalFinish:      string;
-  stones:           string[];
+  materials:        string[];  // metal+stones / ingredients+garnish / materials+components — industry-appropriate
+  finish:           string;    // metal finish / glaze+texture / surface finish
   dominantColours:  string[];
   designStyle:      string;
   craftingDetails:  string;
   priceTier:        string;
   targetAudience:   string;
   emotionalMeaning: string;
-  usps:             string[];
+  usps:             string[];  // 3-5 factual phrases visible in the image
 }
 
 interface CreativeBrief {
@@ -77,43 +79,112 @@ interface CreativeBrief {
 const INSPECT_TIMEOUT_MS = 45_000;
 const BRIEF_TIMEOUT_MS   = 40_000;
 
-// ─── Stage 1 prompt ───────────────────────────────────────────────────────────
+// ─── Stage 1 prompts (per industry) ────────────────────────────────────────────
 
-const INSPECTOR_SYSTEM = `You are a senior gemologist and luxury product analyst.
-Study the product photograph with scientific precision, tile by tile, and document:
-
-1. TYPE — kind of piece and the body part it is worn on (or "none" for non-wearables)
-2. ORIENTATION — the product's silhouette: "tall" (height clearly > width, e.g. drop earrings, pendants, bottles),
-   "wide" (width clearly > height, e.g. a ring lying flat, a plate, a bracelet laid out), or "square"
-3. METAL — colour, tone, likely alloy (yellow / rose / white gold, sterling silver, oxidised silver, brass, platinum)
-4. FINISH — high-polish / brushed / hammered / oxidised / rhodium / textured / engraved
-5. STONES — for each visible stone: colour, probable type, cut, setting
-6. DOMINANT COLOURS — 2–3 colour words that describe the product (e.g. "rose gold", "white", "deep red")
-7. DESIGN LANGUAGE — geometric / floral / art-deco / antique / minimalist / statement / bridal / nature-inspired
-8. CRAFTING — filigree / pavé / hand-engraved / cast / open-work / stone-inlay
-9. PRICE TIER — entry / mid / premium / luxury
-10. AUDIENCE and EMOTIONAL MEANING — who buys it, for what moment, what it says
-11. USPs — 3 to 5 short factual phrases (≤4 words each) visible in the image, e.g. "925 Sterling Silver",
-    "Pavé-Set Marcasite", "Hand-Set Blue Topaz". Never invent facts.
-
-Return ONLY valid JSON:
-{
-  "jewelType": "necklace"|"bracelet"|"ring"|"earrings"|"other",
-  "bodyPart": "neckline"|"wrist"|"finger"|"ear"|"none",
+const INSPECTOR_SCHEMA_JSON = `{
+  "productType": "...",
   "orientation": "tall"|"wide"|"square",
-  "metalType": "...", "metalFinish": "...",
-  "stones": ["..."], "dominantColours": ["..."],
-  "designStyle": "...", "craftingDetails": "...",
+  "materials": ["...", "..."],
+  "finish": "...",
+  "dominantColours": ["...", "..."],
+  "designStyle": "...",
+  "craftingDetails": "...",
   "priceTier": "entry"|"mid"|"premium"|"luxury",
-  "targetAudience": "...", "emotionalMeaning": "...",
+  "targetAudience": "...",
+  "emotionalMeaning": "...",
   "usps": ["...", "...", "..."]
 }`;
 
+export function inspectorSystemFor(industry: Industry): string {
+  const shared =
+    `ORIENTATION is the product's silhouette in the photo: "tall" (height clearly > width), ` +
+    `"wide" (width clearly > height), or "square" (roughly equal). USPs are 3 to 5 short factual phrases ` +
+    `(≤4 words each) visible in the image — never invent facts not visible. Return ONLY valid JSON with ` +
+    `exactly these keys, no markdown, no commentary:\n${INSPECTOR_SCHEMA_JSON}`;
+
+  if (industry === "food_desserts") {
+    return `You are a pastry chef and food stylist analysing a product photograph with a chef's precision.
+Study the image tile by tile and document:
+
+1. PRODUCT TYPE — the specific dish/item (e.g. "chocolate lava cake", "strawberry tart", "cold brew latte")
+2. MATERIALS — key visible ingredients and garnish (e.g. "70% dark chocolate", "fresh raspberries", "gold leaf", "salted caramel drizzle")
+3. FINISH — glaze / frosting texture / plating finish (e.g. "glossy ganache glaze", "dusted icing sugar", "matte fondant")
+4. DOMINANT COLOURS — 2–3 colour words that describe the dish
+5. DESIGN STYLE — rustic / elegant / minimalist / indulgent / playful / artisanal
+6. CRAFTING — visible technique (hand-piped, layered, torched, drizzled, dusted)
+7. PRICE TIER — entry / mid / premium / luxury, judged by presentation and apparent ingredient quality
+8. AUDIENCE and EMOTIONAL MEANING — who orders/bakes this, for what moment, what feeling it gives
+9. USPs — factual, appetite-driving phrases visible in the image, e.g. "70% Belgian Dark Chocolate", "Fresh Raspberry Compote", "Hand-Piped Buttercream"
+
+${shared}`;
+  }
+
+  if (industry === "lifestyle") {
+    return `You are a senior product designer and stylist analysing a product photograph with a design critic's eye.
+Study the image tile by tile and document:
+
+1. PRODUCT TYPE — the specific item (e.g. "ceramic desk diffuser", "canvas tote bag", "wireless earbuds case")
+2. MATERIALS — visible materials and components (e.g. "brushed aluminium", "full-grain leather", "recycled cotton canvas")
+3. FINISH — surface finish (e.g. "matte anodised", "soft-touch rubber", "hand-stitched edge")
+4. DOMINANT COLOURS — 2–3 colour words that describe the product
+5. DESIGN STYLE — minimalist / industrial / organic / retro / tech-forward / artisanal
+6. CRAFTING — visible technique (precision-milled, hand-stitched, injection-moulded, woven)
+7. PRICE TIER — entry / mid / premium / luxury, judged by material and finish quality
+8. AUDIENCE and EMOTIONAL MEANING — who buys this, for what use case, what it signals about them
+9. USPs — factual phrases visible in the image, e.g. "Anodised Aluminium Shell", "FSC-Certified Oak", "Hand-Stitched Leather Strap"
+
+${shared}`;
+  }
+
+  // jewellery (default)
+  return `You are a senior gemologist and luxury product analyst analysing a jewellery photograph with scientific precision.
+Study the image tile by tile and document:
+
+1. PRODUCT TYPE — the specific piece and, in parentheses, the body part it's worn on (e.g. "drop earrings (ear)", "cocktail ring (finger)"; use "none" if not wearable)
+2. MATERIALS — metal (colour/tone/likely alloy: yellow/rose/white gold, sterling silver, oxidised silver, brass, platinum) AND every visible stone (colour, probable type, cut, setting) as separate entries
+3. FINISH — high-polish / brushed / hammered / oxidised / rhodium / textured / engraved
+4. DOMINANT COLOURS — 2–3 colour words (e.g. "rose gold", "white", "deep red")
+5. DESIGN STYLE — geometric / floral / art-deco / antique / minimalist / statement / bridal / nature-inspired
+6. CRAFTING — filigree / pavé / hand-engraved / cast / open-work / stone-inlay
+7. PRICE TIER — entry / mid / premium / luxury
+8. AUDIENCE and EMOTIONAL MEANING — who buys it, for what moment, what it says
+9. USPs — factual phrases visible in the image, e.g. "925 Sterling Silver", "Pavé-Set Marcasite", "Hand-Set Blue Topaz"
+
+${shared}`;
+}
+
 // ─── Stage 2 prompt ───────────────────────────────────────────────────────────
 
-function directorSystem(industry: string, locale: string): string {
+function sceneGuidanceFor(industry: Industry): string {
+  if (industry === "food_desserts") {
+    return `SCENE   — pick the mood whose backdrop flatters the dish: warm bakes (caramel, chocolate, cinnamon) ` +
+      `→ rustic or warm; bright fruity/citrus/fresh items → bright; dark chocolate, coffee, moody plating → moody.`;
+  }
+  if (industry === "lifestyle") {
+    return `SCENE   — pick the mood that flatters the product: neutral/minimal products → minimal; wood, leather, ` +
+      `earthy tones → warm; bold or technical products → urban; natural/eco materials → natural.`;
+  }
+  return `SCENE   — pick the mood whose backdrop flatters the product's dominant colours: rose gold / pink stones ` +
+    `→ romantic or warm; silver / white stones → royal or classic or fresh; yellow gold → classic, emerald or warm; ` +
+    `colourful stones → classic (dark neutral) so stones pop.`;
+}
+
+function headlineGuidanceFor(industry: Industry, locale: string): string {
+  const base =
+    `HEADLINE— 2 to 4 words. Emotional, NOT a description. Never the product type or the word "premium".`;
+  if (industry === "food_desserts") {
+    return `${base} Craving-driven and sensory. Good: "Rich. Warm. Yours." / "Baked This Morning" / "One More Bite" / "Melts First Bite".`;
+  }
+  if (industry === "lifestyle") {
+    return `${base} Confident and functional. Good: "Built For Days Like This" / "Made To Move" / "Everyday, Elevated" / "Carry Less. Live More.".`;
+  }
+  return `${base} Good: "Do Dil. Ek Vaada." / "Worn, Not Kept." / "Light That Lingers" / "Made For Yes". ` +
+    `Locale ${locale}: if IN and the tone is warm, romantic or festive, a short Hinglish line in Roman script is welcome and often stronger.`;
+}
+
+export function directorSystem(industry: Industry, locale: string): string {
   const moods = sceneMoodsFor(industry);
-  return `You are the Art Director at a luxury advertising studio. A gemologist's inspection report and the
+  return `You are the Art Director at a luxury advertising studio. A product inspection report and the
 client's brand brief are attached. Produce ONE Instagram post brief by choosing from the fixed MENU below
 and writing copy that is specific to THIS product. The renderer is deterministic — it will draw exactly
 what you specify, so choose carefully.
@@ -131,19 +202,14 @@ LAYOUT  — orientation "tall"  → text_left_product_right or text_right_produc
 FONTS   — luxury / bridal / heritage feel → luxury_serif or refined_serif or editorial_bold.
           food / warm / playful → friendly_rounded or classic_editorial.
           modern / tech / minimalist lifestyle → modern_geometric or editorial_bold.
-SCENE   — pick the mood whose backdrop flatters the product's dominant colours:
-          rose gold / pink stones → romantic or warm; silver / white stones → royal or classic or fresh;
-          yellow gold → classic, emerald or warm; colourful stones → classic (dark neutral) so stones pop.
-HEADLINE— 2 to 4 words. Emotional, NOT a description. Never the product type or the word "premium".
-          Good: "Do Dil. Ek Vaada." / "Worn, Not Kept." / "Light That Lingers" / "Made For Yes".
-          Locale ${locale}: if IN and the tone is warm, romantic or festive, a short Hinglish line in Roman
-          script is welcome and often stronger.
+${sceneGuidanceFor(industry)}
+${headlineGuidanceFor(industry, locale)}
 ACCENT  — optional 1–3 word punch that follows the headline on its own italic line in the accent colour
           (e.g. headline "Do Dil." accent "Ek Vaada."). Use "" when the headline already lands alone.
 SUB     — 6 to 12 words. One idea. Plain, human, no adjectives stacked.
 TRUST   — product_highlight: exactly 3 bullets, each ≤4 words, rephrased from inspection.usps, each with the
           most fitting icon id from the menu. lifestyle: [].
-POSTTYPE— product_highlight when material / craft / stones are the hero; lifestyle when the moment is.
+POSTTYPE— product_highlight when material / craft / detail is the hero; lifestyle when the moment is.
 CTA     — 2–3 words, kept for the caption.
 FORBIDDEN— "quality", "elegant", "exquisite", "premium", "perfect for every occasion", generic filler.
 
@@ -161,8 +227,7 @@ Return ONLY valid JSON with exactly these keys:
 // ─── Fallback ─────────────────────────────────────────────────────────────────
 
 export const CREATIVE_FALLBACK: CreativeAnalysis = {
-  productType:    "other",
-  bodyPart:       "none",
+  productType:    "product",
   orientation:    "tall",
   placementNotes: "centre-frame product placement",
   postType:       "product_highlight",
@@ -178,12 +243,10 @@ export const CREATIVE_FALLBACK: CreativeAnalysis = {
   sceneMood:      "classic",
 };
 
-// ─── Validation sets ──────────────────────────────────────────────────────────
+// ─── Validation ───────────────────────────────────────────────────────────────
 
-const VALID_PRODUCT = new Set<string>(["necklace", "bracelet", "ring", "earrings", "other"]);
-const VALID_BODY    = new Set<string>(["neckline", "wrist", "finger", "ear", "none"]);
-const VALID_POST    = new Set<string>(["lifestyle", "product_highlight"]);
-const VALID_ORIENT  = new Set<string>(["tall", "wide", "square"]);
+const VALID_POST   = new Set<string>(["lifestyle", "product_highlight"]);
+const VALID_ORIENT = new Set<string>(["tall", "wide", "square"]);
 
 const str    = (v: unknown, fb: string) => (typeof v === "string" && v.trim().length > 0 ? v.trim() : fb);
 const strArr = (v: unknown): string[] =>
@@ -236,29 +299,29 @@ async function gptJson<T>(
 
 // ─── Stage 1 ──────────────────────────────────────────────────────────────────
 
-async function inspectProduct(apiKey: string, imageUrl: string, log: Logger): Promise<ProductInspection | null> {
+async function inspectProduct(
+  apiKey: string, imageUrl: string, industry: Industry, log: Logger,
+): Promise<ProductInspection | null> {
   const raw = await gptJson<Record<string, unknown>>(
-    apiKey, INSPECTOR_SYSTEM,
+    apiKey, inspectorSystemFor(industry),
     [
       { type: "image_url", image_url: { url: imageUrl, detail: "high" } },
-      { type: "text", text: "Study every pixel. Document metal, stones, finish, craft, silhouette orientation and all unique details before writing. Accuracy is everything." },
+      { type: "text", text: "Study every pixel. Document materials, finish, craft, silhouette orientation and all unique details before writing. Accuracy is everything." },
     ],
     900, INSPECT_TIMEOUT_MS, "Stage 1 — Inspect", log,
   );
   if (!raw) return null;
 
   return {
-    jewelType:        VALID_PRODUCT.has(String(raw.jewelType))  ? (raw.jewelType as JewelleryProductType) : "other",
-    bodyPart:         VALID_BODY.has(String(raw.bodyPart))      ? (raw.bodyPart as BodyPart) : "none",
+    productType:      str(raw.productType, "product"),
     orientation:      VALID_ORIENT.has(String(raw.orientation)) ? (raw.orientation as Orientation) : "tall",
-    metalType:        str(raw.metalType, "unknown metal"),
-    metalFinish:      str(raw.metalFinish, "polished"),
-    stones:           strArr(raw.stones),
+    materials:        strArr(raw.materials),
+    finish:           str(raw.finish, "unknown finish"),
     dominantColours:  strArr(raw.dominantColours),
     designStyle:      str(raw.designStyle, "contemporary"),
-    craftingDetails:  str(raw.craftingDetails, "precision-crafted"),
+    craftingDetails:  str(raw.craftingDetails, "carefully made"),
     priceTier:        str(raw.priceTier, "mid"),
-    targetAudience:   str(raw.targetAudience, "jewellery lovers"),
+    targetAudience:   str(raw.targetAudience, "discerning customers"),
     emotionalMeaning: str(raw.emotionalMeaning, "self-expression"),
     usps:             strArr(raw.usps).slice(0, 5),
   };
@@ -269,7 +332,7 @@ async function inspectProduct(apiKey: string, imageUrl: string, log: Logger): Pr
 async function generateBrief(
   apiKey: string, inspection: ProductInspection,
   brandName: string, brandTone: string[], brandHex: string[],
-  industry: string, locale: string, log: Logger,
+  industry: Industry, locale: string, log: Logger,
 ): Promise<CreativeBrief | null> {
   const raw = await gptJson<Record<string, unknown>>(
     apiKey, directorSystem(industry, locale),
@@ -318,6 +381,13 @@ async function generateBrief(
 
 // ─── Public ───────────────────────────────────────────────────────────────────
 
+const VALID_INDUSTRIES = new Set<string>(["jewellery", "food_desserts", "lifestyle"]);
+
+function resolveIndustry(v: string): Industry {
+  const k = v.toLowerCase().trim();
+  return VALID_INDUSTRIES.has(k) ? (k as Industry) : "lifestyle";
+}
+
 export async function analyzeCreative(input: {
   imageUrl:  string;
   brandName: string;
@@ -327,24 +397,28 @@ export async function analyzeCreative(input: {
   locale:    string;
   log:       Logger;
 }): Promise<CreativeAnalysis> {
-  const { imageUrl, brandName, brandTone, brandHex, industry, locale, log } = input;
+  const { imageUrl, brandName, brandTone, brandHex, locale, log } = input;
+  const industry = resolveIndustry(input.industry);
+  if (industry !== input.industry.toLowerCase().trim()) {
+    log(`[creative] unknown industry "${input.industry}" — treating as "lifestyle"`);
+  }
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) { log("[creative] OPENAI_API_KEY not set — using fallback"); return CREATIVE_FALLBACK; }
 
-  log("[creative] ── Stage 1: inspecting product (high-detail vision)…");
-  const inspection = await inspectProduct(apiKey, imageUrl, log);
+  log(`[creative] ── Stage 1: inspecting product (industry=${industry}, high-detail vision)…`);
+  const inspection = await inspectProduct(apiKey, imageUrl, industry, log);
   if (!inspection) { log("[creative] Stage 1 failed — using fallback"); return CREATIVE_FALLBACK; }
   log(
-    `[creative] Stage 1 done — ${inspection.jewelType} ${inspection.orientation} | ${inspection.metalType} | ` +
-    `stones: ${inspection.stones.join(", ") || "none"} | usps: ${inspection.usps.join(" · ")}`,
+    `[creative] Stage 1 done — ${inspection.productType} (${inspection.orientation}) | ${inspection.finish} | ` +
+    `materials: ${inspection.materials.join(", ") || "none"} | usps: ${inspection.usps.join(" · ")}`,
   );
 
   log("[creative] ── Stage 2: art direction from inspection…");
   const brief = await generateBrief(apiKey, inspection, brandName, brandTone, brandHex, industry, locale, log);
   if (!brief) {
     log("[creative] Stage 2 failed — fallback copy with inspection facts");
-    return { ...CREATIVE_FALLBACK, productType: inspection.jewelType, bodyPart: inspection.bodyPart, orientation: inspection.orientation };
+    return { ...CREATIVE_FALLBACK, productType: inspection.productType, orientation: inspection.orientation };
   }
   log(
     `[creative] Stage 2 done — layout=${brief.layoutId} fonts=${brief.fontPairingId} scene=${brief.sceneMood} ` +
@@ -352,8 +426,7 @@ export async function analyzeCreative(input: {
   );
 
   return {
-    productType:    inspection.jewelType,
-    bodyPart:       inspection.bodyPart,
+    productType:    inspection.productType,
     orientation:    inspection.orientation,
     placementNotes: brief.placementNotes,
     postType:       brief.postType,

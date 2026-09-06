@@ -15,7 +15,6 @@ import { useState, useRef, useCallback, type FormEvent, type ChangeEvent } from 
 
 interface CreativeAnalysis {
   productType:    string;
-  bodyPart:       string;
   placementNotes: string;
   postType:       "lifestyle" | "product_highlight";
   storyAngle:     string;
