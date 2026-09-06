@@ -13,8 +13,11 @@ import { randomUUID } from "crypto";
 import type { Request, Response as ExpressResponse } from "express";
 import { v2 as cloudinary } from "cloudinary";
 import Redis from "ioredis";
+import sharp from "sharp";
 import { buildPromoPost } from "./studioTestPromo";
 import { removeBackground } from "./backgroundRemoval";
+import { pickBackground, fetchBackground, type BackgroundItem } from "./backgroundLibrary";
+import type { LayoutId } from "./designSystem";
 import {
   analyzeCreative,
   type CreativeAnalysis,
@@ -136,6 +139,7 @@ export async function handleStudioTestGenerate(
       primaryColor,
       accentColor,
       brandTagline: rawTagline,
+      locale: rawLocale,
       testSessionId: rawSessionId,
     } = req.body as {
       brandName?:    string;
@@ -144,11 +148,13 @@ export async function handleStudioTestGenerate(
       primaryColor?: string;
       accentColor?:  string;
       brandTagline?: string;
+      locale?:       string;
       testSessionId?: string;
     };
 
     const testSessionId = rawSessionId?.trim() || randomUUID();
     const brandTagline  = rawTagline?.trim()   || "";
+    const locale        = rawLocale?.trim()    || "IN";
 
     if (!brandName?.trim() || !industry?.trim() || !tone?.trim()) {
       res.status(400).json({
@@ -187,6 +193,8 @@ export async function handleStudioTestGenerate(
         brandName,
         brandTone: tone.split(",").map((s) => s.trim()).filter(Boolean),
         brandHex:  [primaryColor, accentColor].filter((c): c is string => Boolean(c)),
+        industry,
+        locale,
         log,
       }),
     ]);
@@ -208,10 +216,42 @@ export async function handleStudioTestGenerate(
         ? creativeSettled.value
         : { ...CREATIVE_FALLBACK, placementNotes: "creative analysis unavailable" };
     log(
-      `[studio-test] creative — productType=${analysis.productType} bodyPart=${analysis.bodyPart} ` +
-      `postType=${analysis.postType} headline="${analysis.headline}"`,
+      `[studio-test] creative — productType=${analysis.productType} orientation=${analysis.orientation} ` +
+      `postType=${analysis.postType} layout=${analysis.layoutId} fonts=${analysis.fontPairingId} ` +
+      `scene=${analysis.sceneMood} headline="${analysis.headline}" accent="${analysis.accentLine}"`,
     );
-    log(`[studio-test] trustBullets: ${JSON.stringify(analysis.trustBullets)}`);
+    log(`[studio-test] trustBullets: ${JSON.stringify(analysis.trustBullets)} icons: ${JSON.stringify(analysis.trustIcons)}`);
+
+    // ── 3b. Layout safety: the real cutout aspect overrides the AI's guess ────
+    let layoutId: LayoutId = analysis.layoutId;
+    try {
+      const m = await sharp(cutoutBuffer).metadata();
+      const aspect = (m.height ?? 1) / (m.width ?? 1);
+      if (aspect > 1.2 && (layoutId === "text_top_product_bottom" || layoutId === "centered_hero")) {
+        layoutId = "text_left_product_right";
+        log(`[studio-test] cutout is tall (h/w=${aspect.toFixed(2)}) — layout overridden → ${layoutId}`);
+      } else if (aspect < 0.8 && (layoutId === "text_left_product_right" || layoutId === "text_right_product_left")) {
+        layoutId = "text_top_product_bottom";
+        log(`[studio-test] cutout is wide (h/w=${aspect.toFixed(2)}) — layout overridden → ${layoutId}`);
+      }
+    } catch (_) { /* keep AI layout */ }
+
+    // ── 3c. Pre-rendered backdrop from the library ─────────────────────────────
+    let background: BackgroundItem | null = null;
+    let backgroundBuffer: Buffer | undefined;
+    try {
+      background = pickBackground(industry, analysis.sceneMood);
+      if (background) {
+        backgroundBuffer = await fetchBackground(background);
+        log(`[studio-test] backdrop ${background.id} (${background.tone}, ${background.dominant})`);
+      } else {
+        log(`[studio-test] no library backdrop for industry="${industry}" mood="${analysis.sceneMood}" — using blurred-photo fallback`);
+      }
+    } catch (err) {
+      log(`[studio-test] backdrop fetch failed: ${err instanceof Error ? err.message : String(err)} — using fallback`);
+      background = null;
+      backgroundBuffer = undefined;
+    }
 
     // ── 4. Optional logo ──────────────────────────────────────────────────
     let logoBuffer: Buffer | undefined;
@@ -238,20 +278,25 @@ export async function handleStudioTestGenerate(
     }
 
     // ── 6. Build promo post ────────────────────────────────────────────────
-    log("[studio-test] building promo post (Sharp compositing)…");
+    log("[studio-test] rendering promo post…");
     const promoBuf = await buildPromoPost({
-      productBuffer: originalBuffer,
+      productBuffer:    originalBuffer,
       cutoutBuffer,
       logoBuffer,
+      backgroundBuffer,
+      backgroundTone:   background?.tone ?? "dark",
       brandName,
       brandTagline,
-      headline:    analysis.headline,
-      subheadline: analysis.subheadline,
-      cta:         analysis.cta,
-      trustBullets: analysis.trustBullets,
-      primaryColor: primaryColor || "#1A7A4A",
-      accentColor:  accentColor  || "#FFD700",
-      postType:     analysis.postType,
+      headline:         analysis.headline,
+      accentLine:       analysis.accentLine,
+      subheadline:      analysis.subheadline,
+      cta:              analysis.cta,
+      trustBullets:     analysis.trustBullets,
+      trustIcons:       analysis.trustIcons,
+      primaryColor:     primaryColor || "#1A7A4A",
+      accentColor:      accentColor  || "#FFD700",
+      layoutId,
+      fontPairingId:    analysis.fontPairingId,
       log,
     });
 
@@ -269,7 +314,9 @@ export async function handleStudioTestGenerate(
         logoUrl,
         bgRemovalPath,
         compositedUrl,
-        creativeAnalysis: analysis,
+        creativeAnalysis: { ...analysis, layoutId },
+        backgroundId:   background?.id,
+        backgroundTone: background?.tone,
         templateId,
         logs,
       },

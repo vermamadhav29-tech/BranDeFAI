@@ -1,0 +1,341 @@
+{
+  "generatedAt": "2026-09-06T09:26:32.419Z",
+  "items": [
+    {
+      "id": "jewellery_royal_01",
+      "industry": "jewellery",
+      "mood": "royal",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686438/brandefai/backgrounds/jewellery_royal_01.jpg",
+      "dominant": "#080808",
+      "tone": "dark"
+    },
+    {
+      "id": "jewellery_romantic_01",
+      "industry": "jewellery",
+      "mood": "romantic",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686443/brandefai/backgrounds/jewellery_romantic_01.jpg",
+      "dominant": "#c88888",
+      "tone": "light"
+    },
+    {
+      "id": "jewellery_classic_01",
+      "industry": "jewellery",
+      "mood": "classic",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686453/brandefai/backgrounds/jewellery_classic_01.jpg",
+      "dominant": "#080808",
+      "tone": "dark"
+    },
+    {
+      "id": "jewellery_fresh_01",
+      "industry": "jewellery",
+      "mood": "fresh",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686459/brandefai/backgrounds/jewellery_fresh_01.jpg",
+      "dominant": "#b8b8b8",
+      "tone": "light"
+    },
+    {
+      "id": "jewellery_warm_01",
+      "industry": "jewellery",
+      "mood": "warm",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686470/brandefai/backgrounds/jewellery_warm_01.jpg",
+      "dominant": "#b88858",
+      "tone": "light"
+    },
+    {
+      "id": "jewellery_emerald_01",
+      "industry": "jewellery",
+      "mood": "emerald",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686478/brandefai/backgrounds/jewellery_emerald_01.jpg",
+      "dominant": "#080808",
+      "tone": "dark"
+    },
+    {
+      "id": "jewellery_royal_02",
+      "industry": "jewellery",
+      "mood": "royal",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686529/brandefai/backgrounds/jewellery_royal_02.jpg",
+      "dominant": "#080818",
+      "tone": "dark"
+    },
+    {
+      "id": "jewellery_royal_03",
+      "industry": "jewellery",
+      "mood": "royal",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686534/brandefai/backgrounds/jewellery_royal_03.jpg",
+      "dominant": "#080808",
+      "tone": "dark"
+    },
+    {
+      "id": "jewellery_romantic_02",
+      "industry": "jewellery",
+      "mood": "romantic",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686543/brandefai/backgrounds/jewellery_romantic_02.jpg",
+      "dominant": "#f8c8b8",
+      "tone": "light"
+    },
+    {
+      "id": "jewellery_romantic_03",
+      "industry": "jewellery",
+      "mood": "romantic",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686552/brandefai/backgrounds/jewellery_romantic_03.jpg",
+      "dominant": "#c87878",
+      "tone": "light"
+    },
+    {
+      "id": "jewellery_classic_02",
+      "industry": "jewellery",
+      "mood": "classic",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686560/brandefai/backgrounds/jewellery_classic_02.jpg",
+      "dominant": "#080808",
+      "tone": "dark"
+    },
+    {
+      "id": "jewellery_classic_03",
+      "industry": "jewellery",
+      "mood": "classic",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686569/brandefai/backgrounds/jewellery_classic_03.jpg",
+      "dominant": "#080808",
+      "tone": "dark"
+    },
+    {
+      "id": "jewellery_fresh_02",
+      "industry": "jewellery",
+      "mood": "fresh",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686578/brandefai/backgrounds/jewellery_fresh_02.jpg",
+      "dominant": "#f8f8f8",
+      "tone": "light"
+    },
+    {
+      "id": "jewellery_fresh_03",
+      "industry": "jewellery",
+      "mood": "fresh",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686583/brandefai/backgrounds/jewellery_fresh_03.jpg",
+      "dominant": "#c8c8c8",
+      "tone": "light"
+    },
+    {
+      "id": "jewellery_warm_02",
+      "industry": "jewellery",
+      "mood": "warm",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686592/brandefai/backgrounds/jewellery_warm_02.jpg",
+      "dominant": "#d8a868",
+      "tone": "light"
+    },
+    {
+      "id": "jewellery_warm_03",
+      "industry": "jewellery",
+      "mood": "warm",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686602/brandefai/backgrounds/jewellery_warm_03.jpg",
+      "dominant": "#d89848",
+      "tone": "light"
+    },
+    {
+      "id": "jewellery_emerald_02",
+      "industry": "jewellery",
+      "mood": "emerald",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686611/brandefai/backgrounds/jewellery_emerald_02.jpg",
+      "dominant": "#080808",
+      "tone": "dark"
+    },
+    {
+      "id": "jewellery_emerald_03",
+      "industry": "jewellery",
+      "mood": "emerald",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686617/brandefai/backgrounds/jewellery_emerald_03.jpg",
+      "dominant": "#080808",
+      "tone": "dark"
+    },
+    {
+      "id": "food_desserts_rustic_01",
+      "industry": "food_desserts",
+      "mood": "rustic",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686622/brandefai/backgrounds/food_desserts_rustic_01.jpg",
+      "dominant": "#080808",
+      "tone": "dark"
+    },
+    {
+      "id": "food_desserts_rustic_02",
+      "industry": "food_desserts",
+      "mood": "rustic",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686631/brandefai/backgrounds/food_desserts_rustic_02.jpg",
+      "dominant": "#382818",
+      "tone": "dark"
+    },
+    {
+      "id": "food_desserts_rustic_03",
+      "industry": "food_desserts",
+      "mood": "rustic",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686640/brandefai/backgrounds/food_desserts_rustic_03.jpg",
+      "dominant": "#281808",
+      "tone": "dark"
+    },
+    {
+      "id": "food_desserts_bright_01",
+      "industry": "food_desserts",
+      "mood": "bright",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686646/brandefai/backgrounds/food_desserts_bright_01.jpg",
+      "dominant": "#f8f8e8",
+      "tone": "light"
+    },
+    {
+      "id": "food_desserts_bright_02",
+      "industry": "food_desserts",
+      "mood": "bright",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686655/brandefai/backgrounds/food_desserts_bright_02.jpg",
+      "dominant": "#888878",
+      "tone": "light"
+    },
+    {
+      "id": "food_desserts_bright_03",
+      "industry": "food_desserts",
+      "mood": "bright",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686664/brandefai/backgrounds/food_desserts_bright_03.jpg",
+      "dominant": "#f8f8f8",
+      "tone": "light"
+    },
+    {
+      "id": "food_desserts_moody_01",
+      "industry": "food_desserts",
+      "mood": "moody",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686670/brandefai/backgrounds/food_desserts_moody_01.jpg",
+      "dominant": "#181818",
+      "tone": "dark"
+    },
+    {
+      "id": "food_desserts_moody_02",
+      "industry": "food_desserts",
+      "mood": "moody",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686675/brandefai/backgrounds/food_desserts_moody_02.jpg",
+      "dominant": "#080808",
+      "tone": "dark"
+    },
+    {
+      "id": "food_desserts_moody_03",
+      "industry": "food_desserts",
+      "mood": "moody",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686684/brandefai/backgrounds/food_desserts_moody_03.jpg",
+      "dominant": "#181818",
+      "tone": "dark"
+    },
+    {
+      "id": "food_desserts_warm_01",
+      "industry": "food_desserts",
+      "mood": "warm",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686692/brandefai/backgrounds/food_desserts_warm_01.jpg",
+      "dominant": "#e8b888",
+      "tone": "light"
+    },
+    {
+      "id": "food_desserts_warm_02",
+      "industry": "food_desserts",
+      "mood": "warm",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686700/brandefai/backgrounds/food_desserts_warm_02.jpg",
+      "dominant": "#e8b878",
+      "tone": "light"
+    },
+    {
+      "id": "food_desserts_warm_03",
+      "industry": "food_desserts",
+      "mood": "warm",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686709/brandefai/backgrounds/food_desserts_warm_03.jpg",
+      "dominant": "#b86838",
+      "tone": "dark"
+    },
+    {
+      "id": "lifestyle_minimal_01",
+      "industry": "lifestyle",
+      "mood": "minimal",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686718/brandefai/backgrounds/lifestyle_minimal_01.jpg",
+      "dominant": "#e8e8e8",
+      "tone": "light"
+    },
+    {
+      "id": "lifestyle_minimal_02",
+      "industry": "lifestyle",
+      "mood": "minimal",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686726/brandefai/backgrounds/lifestyle_minimal_02.jpg",
+      "dominant": "#080808",
+      "tone": "dark"
+    },
+    {
+      "id": "lifestyle_minimal_03",
+      "industry": "lifestyle",
+      "mood": "minimal",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686732/brandefai/backgrounds/lifestyle_minimal_03.jpg",
+      "dominant": "#a8a8a8",
+      "tone": "light"
+    },
+    {
+      "id": "lifestyle_warm_01",
+      "industry": "lifestyle",
+      "mood": "warm",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686738/brandefai/backgrounds/lifestyle_warm_01.jpg",
+      "dominant": "#f8e8a8",
+      "tone": "light"
+    },
+    {
+      "id": "lifestyle_warm_02",
+      "industry": "lifestyle",
+      "mood": "warm",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686742/brandefai/backgrounds/lifestyle_warm_02.jpg",
+      "dominant": "#483828",
+      "tone": "dark"
+    },
+    {
+      "id": "lifestyle_warm_03",
+      "industry": "lifestyle",
+      "mood": "warm",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686751/brandefai/backgrounds/lifestyle_warm_03.jpg",
+      "dominant": "#f8d888",
+      "tone": "light"
+    },
+    {
+      "id": "lifestyle_urban_01",
+      "industry": "lifestyle",
+      "mood": "urban",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686756/brandefai/backgrounds/lifestyle_urban_01.jpg",
+      "dominant": "#080808",
+      "tone": "dark"
+    },
+    {
+      "id": "lifestyle_urban_02",
+      "industry": "lifestyle",
+      "mood": "urban",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686761/brandefai/backgrounds/lifestyle_urban_02.jpg",
+      "dominant": "#080808",
+      "tone": "dark"
+    },
+    {
+      "id": "lifestyle_urban_03",
+      "industry": "lifestyle",
+      "mood": "urban",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686769/brandefai/backgrounds/lifestyle_urban_03.jpg",
+      "dominant": "#181818",
+      "tone": "dark"
+    },
+    {
+      "id": "lifestyle_natural_01",
+      "industry": "lifestyle",
+      "mood": "natural",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686775/brandefai/backgrounds/lifestyle_natural_01.jpg",
+      "dominant": "#f8f8f8",
+      "tone": "light"
+    },
+    {
+      "id": "lifestyle_natural_02",
+      "industry": "lifestyle",
+      "mood": "natural",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686783/brandefai/backgrounds/lifestyle_natural_02.jpg",
+      "dominant": "#e8d8c8",
+      "tone": "light"
+    },
+    {
+      "id": "lifestyle_natural_03",
+      "industry": "lifestyle",
+      "mood": "natural",
+      "url": "https://res.cloudinary.com/dsidv1cmg/image/upload/v1788686789/brandefai/backgrounds/lifestyle_natural_03.jpg",
+      "dominant": "#a89878",
+      "tone": "light"
+    }
+  ]
+}

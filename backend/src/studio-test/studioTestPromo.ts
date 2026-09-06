@@ -1,342 +1,281 @@
 /**
- * studioTestPromo.ts
+ * studioTestPromo.ts — deterministic renderer.
  *
- * Builds a 1080×1080 Instagram promo post.
- *
- * Backdrop  = original photo heavily blurred + branded gradient + spotlight
- * Foreground = BiRefNet transparent cutout (with product glow)
- * Text / UI  = Canvas 2D layer (Noto Sans, registered via studioTestAssets)
- *
- * All drawing helpers live in studioTestAssets.ts.
- * Self-contained — no imports from the existing service pipeline.
+ * Takes the Art Director's choices (layout, font pairing, copy, icons) plus the
+ * pre-rendered backdrop and product cutout, and composes a 1080×1080 post.
+ * Regions come from designSystem.LAYOUTS so text and product never collide;
+ * typeEngine fits every string into its region.
  */
 
 import sharp from "sharp";
 import { createCanvas, loadImage } from "canvas";
 import {
-  registerBundledFonts,
-  type Ctx2D,
-  roundRect,
-  drawIcon,
-  buildPremiumBackdrop,
+  registerAllFonts, LAYOUTS, FONT_PAIRINGS, CANVAS_W as W, CANVAS_H as H,
+  type LayoutId, type FontPairingId, type Align,
+} from "./designSystem";
+import { fitText, drawLines, drawTracked, measureTracked, type Ctx2D, type FitResult } from "./typeEngine";
+import {
+  buildPremiumBackdrop, buildShadowLayer, shadeSvg, spotlightSvg,
+  renderIcon, prepareLogo, roundRect, resolveAccent, type Tone,
 } from "./studioTestAssets";
 
-// Register bundled Noto Sans fonts once at module load.
-registerBundledFonts();
-
-const W = 1080;
-const H = 1080;
-
-// ─── Public interface ─────────────────────────────────────────────────────────
-
-export interface PromoInput {
-  productBuffer: Buffer;   // original photo — backdrop source
-  cutoutBuffer:  Buffer;   // BiRefNet transparent cutout (or fallback)
-  logoBuffer?:   Buffer;
-  brandName:     string;
-  brandTagline:  string;
-  headline:      string;
-  subheadline:   string;
-  cta:           string;
-  trustBullets:  string[]; // max 4
-  primaryColor:  string;   // hex e.g. "#1A7A4A"
-  accentColor:   string;   // hex e.g. "#FFD700"
-  postType:      "lifestyle" | "product_highlight";
-  log:           Logger;
-}
+registerAllFonts();
 
 type Logger = (msg: string) => void;
 
-// ─── Text helpers ─────────────────────────────────────────────────────────────
-
-function splitHeadline(headline: string): [string, string] {
-  const words = headline.trim().split(/\s+/);
-  if (words.length <= 1) return [headline, ""];
-  const mid = Math.ceil(words.length / 2);
-  return [words.slice(0, mid).join(" "), words.slice(mid).join(" ")];
+export interface PromoInput {
+  productBuffer:     Buffer;          // original photo (fallback backdrop source)
+  cutoutBuffer:      Buffer;          // BiRefNet transparent PNG
+  logoBuffer?:       Buffer;
+  backgroundBuffer?: Buffer;          // library backdrop, already 1080×1080
+  backgroundTone:    Tone;
+  brandName:         string;
+  brandTagline:      string;
+  headline:          string;
+  accentLine:        string;          // optional italic second line
+  subheadline:       string;
+  cta:               string;          // kept for captions; not rendered
+  trustBullets:      string[];        // ≤3
+  trustIcons:        string[];        // Lucide ids, parallel to trustBullets
+  primaryColor:      string;
+  accentColor:       string;
+  layoutId:          LayoutId;
+  fontPairingId:     FontPairingId;
+  log:               Logger;
 }
 
-function wrapText(text: string, maxChars: number): string[] {
-  const words = text.split(/\s+/);
-  const lines: string[] = [];
-  let line = "";
-  for (const word of words) {
-    const test = line ? `${line} ${word}` : word;
-    if (test.length > maxChars && line) { lines.push(line); line = word; }
-    else line = test;
+export async function buildPromoPost(i: PromoInput): Promise<Buffer> {
+  const L = LAYOUTS[i.layoutId] ?? LAYOUTS.text_left_product_right;
+  const P = FONT_PAIRINGS[i.fontPairingId] ?? FONT_PAIRINGS.luxury_serif;
+  const tone: Tone = i.backgroundBuffer ? i.backgroundTone : "dark";
+
+  const textCol  = tone === "dark" ? "#FFFFFF" : "#161616";
+  const mutedCol = tone === "dark" ? "rgba(255,255,255,0.76)" : "rgba(0,0,0,0.68)";
+  const hairCol  = tone === "dark" ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.18)";
+  const accent   = resolveAccent(i.accentColor, i.primaryColor, tone);
+
+  const dFont = (size: number, italic = false, weight: "bold" | "normal" | "600" = P.displayWeight) =>
+    `${italic ? "italic " : ""}${weight === "normal" ? "" : `${weight} `}${size}px "${P.display}"`;
+  const bFont = (size: number, weight: "bold" | "normal" | "600" = "normal") =>
+    `${weight === "normal" ? "" : `${weight} `}${size}px "${P.body}"`;
+
+  i.log(`[promo] layout=${L.id} fonts=${P.display}/${P.body} tone=${tone} accent=${accent}`);
+
+  // ── 1. Fit product into its region ─────────────────────────────────────────
+  const meta   = await sharp(i.cutoutBuffer).metadata();
+  const cW     = meta.width  ?? 600;
+  const cH     = meta.height ?? 600;
+  const scale  = Math.min(L.product.w / cW, L.product.h / cH);
+  const pw     = Math.max(1, Math.round(cW * scale));
+  const ph     = Math.max(1, Math.round(cH * scale));
+  const px     = Math.round(L.product.x + (L.product.w - pw) / 2);
+  const py     = Math.round(L.product.y + (L.product.h - ph) / 2);
+  const pcx    = px + pw / 2;
+  const pcy    = py + ph / 2;
+  const cutout = await sharp(i.cutoutBuffer).resize(pw, ph).png().toBuffer();
+  i.log(`[promo] product ${pw}×${ph} at (${px},${py})`);
+
+  // ── 2. Backdrop + legibility shade + spotlight ─────────────────────────────
+  let canvas = i.backgroundBuffer
+    ?? await buildPremiumBackdrop(i.productBuffer, W, H, i.primaryColor, pcx, pcy);
+
+  const overlays: sharp.OverlayOptions[] = [{ input: shadeSvg(W, H, L.shade, tone), blend: "over" }];
+  if (tone === "dark") {
+    overlays.push({ input: spotlightSvg(W, H, pcx, pcy, Math.max(pw, ph) * 0.78, 0.16), blend: "screen" });
   }
-  if (line) lines.push(line);
-  return lines;
-}
+  canvas = await sharp(canvas).composite(overlays).png().toBuffer();
 
-// ─── Main export ──────────────────────────────────────────────────────────────
-
-export async function buildPromoPost(input: PromoInput): Promise<Buffer> {
-  const {
-    productBuffer, cutoutBuffer, logoBuffer,
-    brandName, brandTagline, headline, subheadline, cta,
-    trustBullets, primaryColor, accentColor, postType, log,
-  } = input;
-
-  const hasTrust  = trustBullets.length > 0;
-  const hasCta    = postType === "product_highlight";
-  const ctaStripH = hasCta   ? 54 : 0;
-  const trustH    = hasTrust ? 110 : 0;
-  const bottomH   = ctaStripH + trustH;
-  const trustBarY = H - ctaStripH - trustH;
-  const ctaStripY = H - ctaStripH;
-
-  // ── 1. Scale cutout → determine product position first ─────────────────────
-  log("[promo] measuring cutout...");
-  const meta   = await sharp(cutoutBuffer).metadata();
-  const cW     = meta.width  ?? 540;
-  const cH     = meta.height ?? 540;
-  const maxDim = Math.min(580, H - bottomH - 50);   // product can be up to 580px
-  const scale  = Math.min(maxDim / cW, maxDim / cH, 1);
-  const scaledW = Math.round(cW * scale);
-  const scaledH = Math.round(cH * scale);
-
-  const cutoutResized = await sharp(cutoutBuffer)
-    .resize(scaledW, scaledH)
-    .png()
-    .toBuffer();
-
-  // Position: right-centre (63 % from left) — portrait jewellery items are tall
-  const cutLeft = Math.max(0, Math.round(W * 0.63 - scaledW / 2));
-  const cutTop  = Math.max(0, Math.round((H - bottomH) * 0.46 - scaledH / 2));
-  const productCX = cutLeft + scaledW / 2;
-  const productCY = cutTop  + scaledH / 2;
-  log(`[promo] product ${scaledW}×${scaledH} at (${cutLeft},${cutTop}) centre (${Math.round(productCX)},${Math.round(productCY)})`);
-
-  // ── 2. Premium backdrop (blurred photo + brand gradient + spotlight) ────────
-  log("[promo] building premium backdrop...");
-  let canvas = await buildPremiumBackdrop(
-    productBuffer, W, H, primaryColor, productCX, productCY,
-  );
-
-  // ── 3. Product glow halo (soft radial, composited before the cutout) ────────
-  const haloSvg = Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">` +
-    `<defs>` +
-    `<radialGradient id="h" cx="${productCX}" cy="${productCY}" r="${Math.max(scaledW, scaledH) * 0.72}"` +
-    ` gradientUnits="userSpaceOnUse">` +
-    `<stop offset="0%"   stop-color="rgba(255,255,255,0.18)"/>` +
-    `<stop offset="100%" stop-color="rgba(0,0,0,0)"/>` +
-    `</radialGradient></defs>` +
-    `<rect width="${W}" height="${H}" fill="url(#h)"/></svg>`,
-  );
+  // ── 3. Contact shadow + product ────────────────────────────────────────────
+  const shadow = await buildShadowLayer(cutout, pw, ph, px, py, W, H, tone);
   canvas = await sharp(canvas)
-    .composite([{ input: haloSvg, blend: "screen" }])
+    .composite([
+      { input: shadow, blend: "over" },
+      { input: cutout, left: px, top: py, blend: "over" },
+    ])
     .png()
     .toBuffer();
 
-  // ── 4. Composite cutout (foreground product) ────────────────────────────────
-  log("[promo] compositing cutout...");
-  canvas = await sharp(canvas)
-    .composite([{ input: cutoutResized, left: cutLeft, top: cutTop, blend: "over" }])
-    .png()
-    .toBuffer();
-
-  // ── 5. Canvas text + UI layer ────────────────────────────────────────────────
-  log("[promo] drawing text / UI layer...");
-  const [hl1, hl2] = splitHeadline(headline);
-  const subLines   = wrapText(subheadline, 34);
-
+  // ── 4. Typography layer ────────────────────────────────────────────────────
   const nc  = createCanvas(W, H);
   const ctx = nc.getContext("2d") as Ctx2D;
-  ctx.clearRect(0, 0, W, H);
 
-  // ── Logo (no filled circle — just the image or bold initials) ───────────────
-  //    product_highlight → top-left   |   lifestyle → top-right
-  const isLifestyle = postType === "lifestyle";
-  const LOGO_MAX    = 64;
-  const LOGO_PAD_X  = 44;
-  const LOGO_PAD_Y  = 40;
+  const setShadow = (on: boolean) => {
+    ctx.shadowColor = on && tone === "dark" ? "rgba(0,0,0,0.45)" : "rgba(0,0,0,0)";
+    ctx.shadowBlur  = on && tone === "dark" ? 10 : 0;
+  };
 
-  let logoDrawY   = LOGO_PAD_Y;
-  let logoRenderedH = 0;
-  let logoDrawX   = isLifestyle ? W - LOGO_PAD_X : LOGO_PAD_X;
-  let drewLogoImg = false;
+  // Brand block ---------------------------------------------------------------
+  const B      = L.brand;
+  let   by     = B.y;
+  let   hasLogo = false;
 
-  if (logoBuffer) {
+  if (i.logoBuffer) {
     try {
-      const img = await loadImage(logoBuffer);
-      const s   = Math.min(LOGO_MAX / img.width, LOGO_MAX / img.height);
-      const lw  = img.width * s;
-      const lh  = img.height * s;
-      logoDrawX = isLifestyle ? W - LOGO_PAD_X - lw : LOGO_PAD_X;
-
-      ctx.save();
-      ctx.shadowColor = "rgba(0,0,0,0.70)";
-      ctx.shadowBlur  = 10;
-      roundRect(ctx, logoDrawX, logoDrawY, lw, lh, 8);
-      ctx.clip();
-      ctx.drawImage(img, logoDrawX, logoDrawY, lw, lh);
-      ctx.restore();
-
-      logoRenderedH = lh;
-      drewLogoImg   = true;
-    } catch (_) {
-      // fall through to initials
+      const { png, onCard } = await prepareLogo(i.logoBuffer, tone);
+      const img  = await loadImage(png);
+      const s    = Math.min(260 / img.width, B.maxLogoH / img.height);
+      const lw   = img.width * s;
+      const lh   = img.height * s;
+      const lx   = B.align === "left" ? B.x : B.align === "right" ? B.x - lw : B.x - lw / 2;
+      if (onCard) {
+        ctx.fillStyle = "rgba(255,255,255,0.96)";
+        roundRect(ctx, lx - 10, by - 10, lw + 20, lh + 20, 10);
+        ctx.fill();
+      }
+      ctx.drawImage(img, lx, by, lw, lh);
+      by += lh + 18;
+      hasLogo = true;
+    } catch (e) {
+      i.log(`[promo] logo failed: ${e instanceof Error ? e.message : e}`);
     }
   }
 
-  if (!drewLogoImg) {
-    const initials = brandName
-      .split(/\s+/)
-      .map((w) => w[0] ?? "")
-      .join("")
-      .slice(0, 2)
-      .toUpperCase();
-    const initFontSz = 44;
+  setShadow(true);
+  const name     = i.brandName.toUpperCase();
+  let   nameSize = hasLogo ? 26 : 40;
+  let   tracking = P.tracking;
+  ctx.fillStyle    = textCol;
+  ctx.textBaseline = "top";
+  ctx.font         = dFont(nameSize);
+  while (measureTracked(ctx, name, tracking) > 320 && (tracking > 1 || nameSize > 20)) {
+    if (tracking > 1) tracking -= 1; else { nameSize -= 1; ctx.font = dFont(nameSize); }
+  }
+  drawTracked(ctx, name, B.x, by, tracking, B.align);
+  by += nameSize + 8;
 
-    ctx.save();
-    ctx.shadowColor  = "rgba(0,0,0,0.80)";
-    ctx.shadowBlur   = 14;
-    ctx.fillStyle    = "rgba(255,255,255,0.96)";
-    ctx.font         = `bold ${initFontSz}px 'Noto Sans'`;
-    ctx.textAlign    = isLifestyle ? "right" : "left";
-    ctx.textBaseline = "top";
-    ctx.fillText(initials, logoDrawX, logoDrawY);
-    ctx.restore();
-
-    logoRenderedH = initFontSz;
+  if (!L.signoff && i.brandTagline) {
+    ctx.fillStyle = accent;
+    ctx.font      = dFont(18, P.italicAccent, "normal");
+    ctx.textAlign = B.align;
+    ctx.fillText(i.brandTagline, B.x, by);
   }
 
-  // Brand name + tagline below logo
-  const brandNameY  = logoDrawY + logoRenderedH + 12;
-  const textAnchorX = isLifestyle ? W - LOGO_PAD_X : LOGO_PAD_X;
+  // Text block ------------------------------------------------------------------
+  const T  = L.text;
+  const tx = T.align === "left" ? T.x : T.align === "right" ? T.x + T.w : T.x + T.w / 2;
 
-  ctx.save();
-  ctx.shadowColor  = "rgba(0,0,0,0.70)";
-  ctx.shadowBlur   = 6;
-  ctx.fillStyle    = "rgba(255,255,255,0.95)";
-  ctx.font         = "bold 16px 'Noto Sans'";
-  ctx.textAlign    = isLifestyle ? "right" : "left";
-  ctx.textBaseline = "alphabetic";
-  ctx.fillText(brandName.toUpperCase(), textAnchorX, brandNameY);
-
-  ctx.fillStyle = "rgba(255,255,255,0.58)";
-  ctx.font      = "13px 'Noto Sans'";
-  ctx.fillText(brandTagline, textAnchorX, brandNameY + 20);
-  ctx.restore();
-
-  // ── Headline ─────────────────────────────────────────────────────────────────
-  const hl1Y = 390;
-  ctx.save();
-  ctx.shadowColor  = "rgba(0,0,0,0.60)";
-  ctx.shadowBlur   = 8;
-  ctx.fillStyle    = "rgba(255,255,255,0.97)";
-  ctx.font         = "bold 72px 'Noto Sans'";
-  ctx.textAlign    = "left";
-  ctx.textBaseline = "alphabetic";
-  ctx.fillText(hl1, 44, hl1Y);
-
-  const hl2Y = hl1Y + 84;
-  if (hl2) {
-    ctx.fillStyle = accentColor;
-    ctx.font      = "bold 72px 'Noto Sans'";
-    ctx.fillText(hl2, 44, hl2Y);
+  const hl = fitText(ctx, i.headline, {
+    fontFor: (s) => dFont(s), maxSize: 92, minSize: 52, maxW: T.w, maxLines: 2, lineHeight: 1.04,
+  });
+  let acc: FitResult | null = null;
+  if (i.accentLine.trim()) {
+    acc = fitText(ctx, i.accentLine.trim(), {
+      fontFor: (s) => dFont(s, P.italicAccent), maxSize: hl.size, minSize: 44, maxW: T.w, maxLines: 1, lineHeight: 1.04,
+    });
   }
-  ctx.restore();
+  const sub = fitText(ctx, i.subheadline, {
+    fontFor: (s) => bFont(s), maxSize: 26, minSize: 19, maxW: T.w, maxLines: 3, lineHeight: 1.38,
+  });
 
-  // ── Accent rule ───────────────────────────────────────────────────────────────
-  const ruleY = (hl2 ? hl2Y : hl1Y) + 16;
-  ctx.fillStyle = accentColor;
-  ctx.fillRect(44, ruleY, 70, 3);
+  const gapRule = 22, ruleH = 3, gapSub = 24, ruleW = 56;
+  const blockH  = hl.totalH + (acc?.totalH ?? 0) + gapRule + ruleH + gapSub + sub.totalH;
+  let   y       = T.y + Math.max(0, (T.h - blockH) / 2);
 
-  // ── Subheadline ───────────────────────────────────────────────────────────────
-  ctx.save();
-  ctx.shadowColor  = "rgba(0,0,0,0.50)";
-  ctx.shadowBlur   = 4;
-  ctx.fillStyle    = "rgba(255,255,255,0.80)";
-  ctx.font         = "22px 'Noto Sans'";
-  ctx.textAlign    = "left";
-  ctx.textBaseline = "alphabetic";
-  const subStart = ruleY + 36;
-  subLines.forEach((line, i) => ctx.fillText(line, 44, subStart + i * 32));
-  ctx.restore();
+  ctx.fillStyle = textCol;
+  ctx.font      = dFont(hl.size);
+  y = drawLines(ctx, hl.lines, tx, y, hl.lineH, T.align);
 
-  // ── Trust bar ─────────────────────────────────────────────────────────────────
-  if (hasTrust) {
-    const bullets  = trustBullets.slice(0, 4);
-    const sectionW = Math.floor(W / bullets.length);
+  if (acc) {
+    ctx.fillStyle = accent;
+    ctx.font      = dFont(acc.size, P.italicAccent);
+    y = drawLines(ctx, acc.lines, tx, y, acc.lineH, T.align);
+  }
 
-    ctx.fillStyle = "rgba(0,0,0,0.82)";
-    ctx.fillRect(0, trustBarY, W, trustH);
+  y += gapRule;
+  const rx = T.align === "left" ? tx : T.align === "right" ? tx - ruleW : tx - ruleW / 2;
+  ctx.fillStyle = accent;
+  ctx.fillRect(rx, y, ruleW, ruleH);
+  y += ruleH + gapSub;
 
-    // Thin accent line at top of trust bar
-    ctx.fillStyle = accentColor;
-    ctx.fillRect(0, trustBarY, W, 2);
+  ctx.fillStyle = mutedCol;
+  ctx.font      = bFont(sub.size);
+  drawLines(ctx, sub.lines, tx, y, sub.lineH, T.align);
 
-    bullets.forEach((bullet, i) => {
-      const sCx = i * sectionW + sectionW / 2;
+  // Trust row -------------------------------------------------------------------
+  const bullets = i.trustBullets.filter(Boolean).slice(0, 3);
+  if (L.trust && bullets.length > 0) {
+    const R      = L.trust;
+    const n      = bullets.length;
+    const colW   = R.align === "center" ? R.w / n : Math.min(196, R.w / n);
+    const startX = R.align === "center" ? R.x + (R.w - colW * n) / 2 : R.x;
+    const iconSz = 30;
 
-      // Vertical divider
-      if (i > 0) {
-        ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    for (let k = 0; k < n; k++) {
+      const cx = startX + colW * k + colW / 2;
+
+      if (k > 0) {
+        ctx.strokeStyle = hairCol;
         ctx.lineWidth   = 1;
         ctx.beginPath();
-        ctx.moveTo(i * sectionW, trustBarY + 16);
-        ctx.lineTo(i * sectionW, trustBarY + trustH - 16);
+        ctx.moveTo(startX + colW * k, R.y + 4);
+        ctx.lineTo(startX + colW * k, R.y + 86);
         ctx.stroke();
       }
 
-      // Icon — centred in upper half of the trust bar
-      drawIcon(ctx, bullet, sCx, trustBarY + 34, accentColor);
+      const iconPng = (await renderIcon(i.trustIcons[k] ?? "sparkles", iconSz, accent))
+                   ?? (await renderIcon("sparkles", iconSz, accent));
+      if (iconPng) {
+        const im = await loadImage(iconPng);
+        ctx.drawImage(im, cx - iconSz / 2, R.y, iconSz, iconSz);
+      }
 
-      // Label text — centred below icon
-      ctx.fillStyle    = "rgba(255,255,255,0.90)";
-      ctx.font         = "bold 11px 'Noto Sans'";
-      ctx.textAlign    = "center";
+      const lab = fitText(ctx, bullets[k], {
+        fontFor: (s) => bFont(s, "600"), maxSize: 16, minSize: 13, maxW: colW - 24, maxLines: 2, lineHeight: 1.25,
+      });
+      ctx.fillStyle = textCol;
+      ctx.font      = bFont(lab.size, "600");
+      drawLines(ctx, lab.lines, cx, R.y + iconSz + 12, lab.lineH, "center");
+    }
+  }
+
+  // Sign-off --------------------------------------------------------------------
+  if (L.signoff) {
+    const S        = L.signoff;
+    const brandStr = `${i.brandName}.`;
+    const tag      = i.brandTagline.trim();
+    ctx.textBaseline = "alphabetic";
+
+    ctx.font = dFont(30);
+    const bw = ctx.measureText(brandStr).width;
+    ctx.font = dFont(26, P.italicAccent, "normal");
+    const tw  = tag ? ctx.measureText(tag).width : 0;
+    const gap = tag ? 14 : 0;
+    const maxW = L.trust ? 440 : 620;
+
+    if (!tag || bw + gap + tw <= maxW) {
+      const total = bw + gap + tw;
+      const x0 = S.align === "right" ? S.x - total : S.align === "left" ? S.x : S.x - total / 2;
+      ctx.textAlign = "left";
+      ctx.fillStyle = textCol; ctx.font = dFont(30);
+      ctx.fillText(brandStr, x0, S.y);
+      if (tag) {
+        ctx.fillStyle = accent; ctx.font = dFont(26, P.italicAccent, "normal");
+        ctx.fillText(tag, x0 + bw + gap, S.y);
+      }
+    } else {
+      ctx.textAlign = S.align as Align;
+      ctx.fillStyle = textCol; ctx.font = dFont(30);
+      ctx.fillText(brandStr, S.x, S.y - 34);
+      const tf = fitText(ctx, tag, {
+        fontFor: (s) => dFont(s, P.italicAccent, "normal"), maxSize: 26, minSize: 18, maxW, maxLines: 1,
+      });
       ctx.textBaseline = "alphabetic";
-      const parts = wrapText(bullet, 18).slice(0, 2);
-      parts.forEach((p, j) => ctx.fillText(p, sCx, trustBarY + 66 + j * 16));
-    });
+      ctx.fillStyle = accent; ctx.font = dFont(tf.size, P.italicAccent, "normal");
+      ctx.fillText(tf.lines[0], S.x, S.y);
+    }
+
+    const ruleX = S.align === "right" ? S.x - 60 : S.align === "left" ? S.x : S.x - 30;
+    ctx.fillStyle = accent;
+    ctx.fillRect(ruleX, S.y + 14, 60, 2);
   }
 
-  // ── CTA strip (product_highlight only) ───────────────────────────────────────
-  if (hasCta) {
-    ctx.fillStyle = "rgba(0,0,0,0.90)";
-    ctx.fillRect(0, ctaStripY, W, ctaStripH);
-
-    // Accent line at top of CTA strip
-    ctx.fillStyle = accentColor;
-    ctx.fillRect(0, ctaStripY, W, 2);
-
-    // Tagline left
-    ctx.fillStyle    = "rgba(255,255,255,0.70)";
-    ctx.font         = "13px 'Noto Sans'";
-    ctx.textAlign    = "left";
-    ctx.textBaseline = "middle";
-    ctx.fillText(brandTagline, 30, ctaStripY + ctaStripH / 2);
-
-    // CTA pill button right
-    const btnW = 170, btnH = 38;
-    const btnX = W - btnW - 24;
-    const btnY = ctaStripY + (ctaStripH - btnH) / 2;
-
-    ctx.fillStyle = "white";
-    roundRect(ctx, btnX, btnY, btnW, btnH, 19);
-    ctx.fill();
-
-    ctx.fillStyle    = primaryColor;
-    ctx.font         = "bold 13px 'Noto Sans'";
-    ctx.textAlign    = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(`${cta.toUpperCase()} →`, btnX + btnW / 2, btnY + btnH / 2);
-  }
-
-  // ── Composite text layer ──────────────────────────────────────────────────────
-  const textBuf = nc.toBuffer("image/png");
+  // ── 5. Composite + encode ─────────────────────────────────────────────────
   canvas = await sharp(canvas)
-    .composite([{ input: textBuf, blend: "over" }])
+    .composite([{ input: nc.toBuffer("image/png"), blend: "over" }])
     .png()
     .toBuffer();
 
-  // ── Output 1080×1080 JPEG ────────────────────────────────────────────────────
-  log("[promo] encoding 1080×1080 JPEG...");
-  const result = await sharp(canvas).jpeg({ quality: 93 }).toBuffer();
-  log(`[promo] done — ${result.length} bytes`);
-  return result;
+  const out = await sharp(canvas).jpeg({ quality: 93 }).toBuffer();
+  i.log(`[promo] done — ${out.length} bytes`);
+  return out;
 }

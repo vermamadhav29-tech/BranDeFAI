@@ -20,9 +20,15 @@ interface CreativeAnalysis {
   postType:       "lifestyle" | "product_highlight";
   storyAngle:     string;
   headline:       string;
+  accentLine?:    string;
   subheadline:    string;
   cta:            string;
   trustBullets:   string[];
+  trustIcons?:    string[];
+  orientation?:   string;
+  layoutId?:      string;
+  fontPairingId?: string;
+  sceneMood?:     string;
 }
 
 interface ResponseData {
@@ -30,6 +36,8 @@ interface ResponseData {
   logoUrl?: string;
   bgRemovalPath?: "cutout" | "fallback";
   compositedUrl: string;
+  backgroundId?: string;
+  backgroundTone?: string;
   templateId?: string;
   creativeAnalysis?: CreativeAnalysis;
   logs: string[];
@@ -593,15 +601,34 @@ export default function StudioTestPage() {
               {response.data.creativeAnalysis && (
                 <>
                   <Meta label="Post Type"    value={response.data.creativeAnalysis.postType} />
+                  {response.data.creativeAnalysis.layoutId && (
+                    <Meta label="Layout" value={response.data.creativeAnalysis.layoutId} />
+                  )}
+                  {response.data.creativeAnalysis.fontPairingId && (
+                    <Meta label="Fonts" value={response.data.creativeAnalysis.fontPairingId} />
+                  )}
+                  {response.data.creativeAnalysis.sceneMood && (
+                    <Meta
+                      label="Backdrop"
+                      value={`${response.data.creativeAnalysis.sceneMood}${response.data.backgroundId ? ` → ${response.data.backgroundId}` : " → fallback (no library)"}`}
+                    />
+                  )}
                   <Meta label="Story Angle"  value={response.data.creativeAnalysis.storyAngle} />
-                  <Meta label="Headline"     value={response.data.creativeAnalysis.headline} />
+                  <Meta
+                    label="Headline"
+                    value={`${response.data.creativeAnalysis.headline}${response.data.creativeAnalysis.accentLine ? ` / ${response.data.creativeAnalysis.accentLine}` : ""}`}
+                  />
                   <Meta label="CTA"          value={response.data.creativeAnalysis.cta} />
-                  <Meta label="Product Type" value={response.data.creativeAnalysis.productType} />
-                  <Meta label="Body Part"    value={response.data.creativeAnalysis.bodyPart} />
+                  <Meta label="Product Type" value={`${response.data.creativeAnalysis.productType}${response.data.creativeAnalysis.orientation ? ` (${response.data.creativeAnalysis.orientation})` : ""}`} />
                   {response.data.creativeAnalysis.trustBullets.length > 0 && (
                     <Meta
                       label="Trust Bullets"
-                      value={response.data.creativeAnalysis.trustBullets.join(" · ")}
+                      value={response.data.creativeAnalysis.trustBullets
+                        .map((b, k) => {
+                          const icon = response.data?.creativeAnalysis?.trustIcons?.[k];
+                          return icon ? `${b} [${icon}]` : b;
+                        })
+                        .join(" · ")}
                     />
                   )}
                 </>
