@@ -47,11 +47,17 @@ export interface CreativeAnalysis {
   sceneDescription:  string;   // bespoke backdrop description, drives live Flux generation
 }
 
+// ─── Public: product localization ──────────────────────────────────────────────
+
+/** Fractions of image width/height (0-1), tightly around the sellable product only. */
+export interface BoundingBox { x: number; y: number; width: number; height: number }
+
 // ─── Private types ────────────────────────────────────────────────────────────
 
 interface ProductInspection {
   productType:      string;    // e.g. "drop earrings" | "chocolate lava cake" | "ceramic desk diffuser"
   orientation:      Orientation;
+  productBox:       BoundingBox | null;  // tight crop around just the product, excluding any stand/prop
   materials:        string[];  // metal+stones / ingredients+garnish / materials+components — industry-appropriate
   finish:           string;    // metal finish / glaze+texture / surface finish
   dominantColours:  string[];
@@ -86,6 +92,7 @@ const BRIEF_TIMEOUT_MS   = 40_000;
 const INSPECTOR_SCHEMA_JSON = `{
   "productType": "...",
   "orientation": "tall"|"wide"|"square",
+  "productBox": { "x": 0.0-1.0, "y": 0.0-1.0, "width": 0.0-1.0, "height": 0.0-1.0 },
   "materials": ["...", "..."],
   "finish": "...",
   "dominantColours": ["...", "..."],
@@ -100,9 +107,15 @@ const INSPECTOR_SCHEMA_JSON = `{
 export function inspectorSystemFor(industry: Industry): string {
   const shared =
     `ORIENTATION is the product's silhouette in the photo: "tall" (height clearly > width), ` +
-    `"wide" (width clearly > height), or "square" (roughly equal). USPs are 3 to 5 short factual phrases ` +
-    `(≤4 words each) visible in the image — never invent facts not visible. Return ONLY valid JSON with ` +
-    `exactly these keys, no markdown, no commentary:\n${INSPECTOR_SCHEMA_JSON}`;
+    `"wide" (width clearly > height), or "square" (roughly equal).\n\n` +
+    `PRODUCT BOX — draw a tight bounding box around ONLY the sellable product itself, as fractions of the ` +
+    `full image (x, y = top-left corner; width, height = box size; all 0.0 to 1.0). This box will be used to ` +
+    `crop the photo before background removal, so precision matters: if the product is displayed on a stand, ` +
+    `mannequin, bust, plate, easel, or any other prop, EXCLUDE that prop — the box must hug only the item being ` +
+    `sold, not what it's resting on or hung from. Leave a small margin (do not clip the product itself). If you ` +
+    `cannot confidently localise it, return null.\n\n` +
+    `USPs are 3 to 5 short factual phrases (≤4 words each) visible in the image — never invent facts not ` +
+    `visible. Return ONLY valid JSON with exactly these keys, no markdown, no commentary:\n${INSPECTOR_SCHEMA_JSON}`;
 
   if (industry === "food_desserts") {
     return `You are a pastry chef and food stylist analysing a product photograph with a chef's precision.
@@ -270,6 +283,20 @@ const str    = (v: unknown, fb: string) => (typeof v === "string" && v.trim().le
 const strArr = (v: unknown): string[] =>
   Array.isArray(v) ? (v as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0) : [];
 
+function parseBoundingBox(v: unknown): BoundingBox | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const x = Number(o.x), y = Number(o.y), width = Number(o.width), height = Number(o.height);
+  if ([x, y, width, height].some((n) => !Number.isFinite(n))) return null;
+  // Reject degenerate or implausible boxes rather than cropping to something useless.
+  if (width < 0.08 || height < 0.08 || width > 1 || height > 1) return null;
+  if (x < 0 || y < 0 || x + width > 1.05 || y + height > 1.05) return null;
+  return {
+    x: Math.max(0, x), y: Math.max(0, y),
+    width: Math.min(width, 1 - Math.max(0, x)), height: Math.min(height, 1 - Math.max(0, y)),
+  };
+}
+
 // ─── GPT-4o JSON helper ───────────────────────────────────────────────────────
 
 async function gptJson<T>(
@@ -333,6 +360,7 @@ async function inspectProduct(
   return {
     productType:      str(raw.productType, "product"),
     orientation:      VALID_ORIENT.has(String(raw.orientation)) ? (raw.orientation as Orientation) : "tall",
+    productBox:       parseBoundingBox(raw.productBox),
     materials:        strArr(raw.materials),
     finish:           str(raw.finish, "unknown finish"),
     dominantColours:  strArr(raw.dominantColours),
@@ -415,6 +443,9 @@ export async function analyzeCreative(input: {
   industry:  string;
   locale:    string;
   log:       Logger;
+  /** Fired as soon as Stage 1 completes (or fails, with null) — lets the caller start
+   *  cropping/background-removal without waiting for Stage 2's ~40s art-direction call. */
+  onInspection?: (box: BoundingBox | null) => void;
 }): Promise<CreativeAnalysis> {
   const { imageUrl, brandName, brandTone, brandHex, locale, log } = input;
   const industry = resolveIndustry(input.industry);
@@ -423,15 +454,25 @@ export async function analyzeCreative(input: {
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) { log("[creative] OPENAI_API_KEY not set — using fallback"); return CREATIVE_FALLBACK; }
+  if (!apiKey) {
+    log("[creative] OPENAI_API_KEY not set — using fallback");
+    input.onInspection?.(null);
+    return CREATIVE_FALLBACK;
+  }
 
   log(`[creative] ── Stage 1: inspecting product (industry=${industry}, high-detail vision)…`);
   const inspection = await inspectProduct(apiKey, imageUrl, industry, log);
-  if (!inspection) { log("[creative] Stage 1 failed — using fallback"); return CREATIVE_FALLBACK; }
+  if (!inspection) {
+    log("[creative] Stage 1 failed — using fallback");
+    input.onInspection?.(null);
+    return CREATIVE_FALLBACK;
+  }
   log(
     `[creative] Stage 1 done — ${inspection.productType} (${inspection.orientation}) | ${inspection.finish} | ` +
-    `materials: ${inspection.materials.join(", ") || "none"} | usps: ${inspection.usps.join(" · ")}`,
+    `materials: ${inspection.materials.join(", ") || "none"} | usps: ${inspection.usps.join(" · ")} | ` +
+    `productBox=${inspection.productBox ? JSON.stringify(inspection.productBox) : "none"}`,
   );
+  input.onInspection?.(inspection.productBox);
 
   log("[creative] ── Stage 2: art direction from inspection…");
   const brief = await generateBrief(apiKey, inspection, brandName, brandTone, brandHex, industry, locale, log);

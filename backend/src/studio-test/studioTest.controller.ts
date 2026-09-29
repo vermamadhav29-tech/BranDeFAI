@@ -26,6 +26,7 @@ import {
   analyzeCreative,
   type CreativeAnalysis,
   type PostType,
+  type BoundingBox,
   CREATIVE_FALLBACK,
 } from "./productVision";
 import {
@@ -107,6 +108,35 @@ async function pickRotatedTemplate(
   const candidates = lastId ? typePool.filter((t) => t.id !== lastId) : typePool;
   const pool = candidates.length > 0 ? candidates : typePool;
   return pickRandom(pool);
+}
+
+// ─── Product localization ───────────────────────────────────────────────────────
+
+/**
+ * BiRefNet segments far better when the subject dominates the frame — a small
+ * product against a large, visually busy studio backdrop (wood panelling, a
+ * velvet display bust, props) is exactly the case it struggles with. Crop
+ * tightly to Stage 1's product box (which explicitly excludes any stand/prop)
+ * before handing the photo to BiRefNet, so it has an easier job.
+ */
+async function cropToBoundingBox(original: Buffer, box: BoundingBox, log: Logger): Promise<Buffer> {
+  const meta = await sharp(original).metadata();
+  const W = meta.width ?? 0, H = meta.height ?? 0;
+  if (!W || !H) return original;
+
+  const pad = 0.12; // generous margin so the crop doesn't clip the product itself
+  const bx = Math.max(0, box.x - pad);
+  const by = Math.max(0, box.y - pad);
+  const bw = Math.min(1 - bx, box.width + pad * 2);
+  const bh = Math.min(1 - by, box.height + pad * 2);
+
+  const left   = Math.round(bx * W);
+  const top    = Math.round(by * H);
+  const width  = Math.max(10, Math.min(W - left, Math.round(bw * W)));
+  const height = Math.max(10, Math.min(H - top, Math.round(bh * H)));
+
+  log(`[studio-test] cropping to product box: ${width}x${height} at (${left},${top}) of ${W}x${H} photo`);
+  return sharp(original).extract({ left, top, width, height }).toBuffer();
 }
 
 async function writeTemplateId(
@@ -196,20 +226,60 @@ export async function handleStudioTestGenerate(
     }
 
     // ── 3. BG removal + Creative Director + Logo vision, all in parallel ───
-    // The logo check is cheap (~5-10s) and rides for free alongside the ~85s
-    // creative pipeline — no added latency.
+    // Background removal waits only for Stage 1 (product localization), not the
+    // full ~85s creative pipeline — Stage 2 (art direction) keeps running in the
+    // background while the crop + BiRefNet call happen, so this costs no extra
+    // wall-clock time overall. The logo check is cheap (~5-10s) and rides free too.
+    let resolveBox: (box: BoundingBox | null) => void;
+    const boxReady = new Promise<BoundingBox | null>((resolve) => { resolveBox = resolve; });
+
+    const creativePromise = analyzeCreative({
+      imageUrl:  productImageUrl,
+      brandName,
+      brandTone: tone.split(",").map((s) => s.trim()).filter(Boolean),
+      brandHex:  [], // colours are auto-derived from the logo/product post-analysis, not user-picked
+      industry,
+      locale,
+      log,
+      onInspection: (box) => resolveBox(box),
+    });
+    creativePromise.catch(() => resolveBox(null)); // never let a hard failure hang boxReady forever
+
+    // Never rejects — a BiRefNet failure is captured in the result, not thrown, so
+    // fallbackSource (the crop, if one was made) is always available downstream
+    // for a corner-key retry, instead of being lost with the rejection.
+    type BgOutcome =
+      | { ok: true;  result: Buffer;   fallbackSource: Buffer }
+      | { ok: false; error: unknown;   fallbackSource: Buffer };
+
+    const bgPromise = (async (): Promise<BgOutcome> => {
+      const box = await boxReady;
+      let bgSourceUrl     = productImageUrl;
+      let fallbackSource  = originalBuffer; // best candidate for a corner-key retry if BiRefNet still fails
+      if (box) {
+        try {
+          const cropped = await cropToBoundingBox(originalBuffer, box, log);
+          bgSourceUrl    = await uploadBuf(cropped, "brandefai/studio-test/products-cropped");
+          fallbackSource = cropped; // the crop is a much better corner-key candidate than the busy full photo
+          log(`[studio-test] product cropped for background removal: ${bgSourceUrl}`);
+        } catch (err) {
+          log(`[studio-test] crop failed, using full photo: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      } else {
+        log("[studio-test] no product box from Stage 1 — running background removal on full photo");
+      }
+      try {
+        const result = await removeBackground(bgSourceUrl, log);
+        return { ok: true, result, fallbackSource };
+      } catch (error) {
+        return { ok: false, error, fallbackSource };
+      }
+    })();
+
     log("[studio-test] background removal + creative analysis + logo check in parallel…");
     const [bgSettled, creativeSettled, logoHintSettled] = await Promise.allSettled([
-      removeBackground(productImageUrl, log),
-      analyzeCreative({
-        imageUrl:  productImageUrl,
-        brandName,
-        brandTone: tone.split(",").map((s) => s.trim()).filter(Boolean),
-        brandHex:  [], // colours are auto-derived from the logo/product post-analysis, not user-picked
-        industry,
-        locale,
-        log,
-      }),
+      bgPromise,
+      creativePromise,
       logoUrl ? inspectLogo(logoUrl, log) : Promise.resolve(null),
     ]);
 
@@ -219,21 +289,26 @@ export async function handleStudioTestGenerate(
     let bgRemovalPath: "cutout" | "corner-key" | "fallback" = "fallback";
     let cutoutBuffer: Buffer = originalBuffer;
 
-    if (bgSettled.status === "fulfilled") {
-      cutoutBuffer  = bgSettled.value;
+    // bgPromise never rejects (see BgOutcome above), so this is always "fulfilled"
+    // with either an ok or a failed outcome — Promise.allSettled here is just
+    // consistent with how creativePromise/logoHintSettled are handled.
+    const bgOutcome: BgOutcome | null = bgSettled.status === "fulfilled" ? bgSettled.value : null;
+
+    if (bgOutcome?.ok) {
+      cutoutBuffer  = bgOutcome.result;
       bgRemovalPath = "cutout";
       log(`[studio-test] background removal OK — ${cutoutBuffer.length} bytes transparent PNG [CUTOUT path]`);
 
       // BiRefNet sometimes has nothing to remove: a tightly-framed studio photo
       // whose backdrop fills the whole frame gets classified as "all foreground",
       // returning an almost-fully-opaque result. Detect that and try a corner-
-      // colour key on the original photo as a supplementary pass.
+      // colour key on the source photo (the crop, if we made one) as a supplementary pass.
       const opacity = await opacityRatio(cutoutBuffer).catch(() => 1);
       log(`[studio-test] cutout opacity ratio=${(opacity * 100).toFixed(1)}%`);
       if (opacity > 0.97) {
         log("[studio-test] BiRefNet result is almost fully opaque — likely nothing to remove; " +
-            "trying a corner-colour key on the original photo");
-        const keyed = await tryAutoKeyFlatBackground(originalBuffer).catch(() => null);
+            "trying a corner-colour key on the source photo");
+        const keyed = await tryAutoKeyFlatBackground(bgOutcome.fallbackSource).catch(() => null);
         if (keyed) {
           cutoutBuffer  = keyed;
           bgRemovalPath = "corner-key";
@@ -243,15 +318,19 @@ export async function handleStudioTestGenerate(
         }
       }
     } else {
-      const msg = bgSettled.reason instanceof Error ? bgSettled.reason.message : String(bgSettled.reason);
-      log(`[studio-test] background removal FAILED: ${msg} — trying a corner-colour key on the original photo`);
-      const keyed = await tryAutoKeyFlatBackground(originalBuffer).catch(() => null);
+      const source = bgOutcome?.fallbackSource ?? originalBuffer;
+      const msg = bgOutcome && !bgOutcome.ok
+        ? (bgOutcome.error instanceof Error ? bgOutcome.error.message : String(bgOutcome.error))
+        : "background removal promise did not settle as expected";
+      log(`[studio-test] background removal FAILED: ${msg} — trying a corner-colour key on the source photo`);
+      const keyed = await tryAutoKeyFlatBackground(source).catch(() => null);
       if (keyed) {
         cutoutBuffer  = keyed;
         bgRemovalPath = "corner-key";
         log("[studio-test] corner-colour key succeeded [CORNER-KEY path]");
       } else {
-        log("[studio-test] corner-colour key also found no uniform background — using original photo as-is [FALLBACK path]");
+        log("[studio-test] corner-colour key also found no uniform background — using source photo as-is [FALLBACK path]");
+        cutoutBuffer = source;
       }
     }
 
