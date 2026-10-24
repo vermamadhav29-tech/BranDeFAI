@@ -1,300 +1,72 @@
 "use client";
 
-import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, Search, Check, Upload, X, Sparkles, RefreshCw } from "lucide-react";
+import { Loader2, Search, Check, Upload, Sparkles, RefreshCw } from "lucide-react";
+import Brand from "@/components/draftr/Brand";
 import apiClient from "@/lib/apiClient";
+import AnalysisScreen from "./AnalysisScreen";
+import { isUnreachable, saveOfflineBrand, fallbackText, fileToLogoDataUrl } from "@/lib/offlineBrand";
 import { useBrandStore } from "@/stores/brandStore";
 import { useAuthStore } from "@/stores/authStore";
-import { cn } from "@/lib/utils";
-import type { Brand } from "@/types";
-
-// ─── Industry data ────────────────────────────────────────────────────────────
-
-const INDUSTRIES = [
-  { value: "Fashion & Apparel",        emoji: "👗" },
-  { value: "Jewellery",                emoji: "💎" },
-  { value: "Beauty & Skincare",        emoji: "💄" },
-  { value: "Home Decor",               emoji: "🏡" },
-  { value: "Food & Beverage",          emoji: "🍜" },
-  { value: "Restaurant & Cafe",        emoji: "☕" },
-  { value: "Salon & Spa",              emoji: "💅" },
-  { value: "D2C Products",             emoji: "📦" },
-  { value: "Health & Wellness",        emoji: "🌿" },
-  { value: "Electronics & Tech",       emoji: "💻" },
-  { value: "Baby & Kids",              emoji: "🍼" },
-  { value: "Fitness & Sports",         emoji: "🏋️" },
-  { value: "Luxury Goods",             emoji: "✨" },
-  { value: "Handicrafts & Artisan",    emoji: "🪡" },
-  { value: "Wedding & Celebrations",   emoji: "💍" },
-  { value: "Interior Design",          emoji: "🛋️" },
-  { value: "Education",                emoji: "📚" },
-  { value: "Real Estate",              emoji: "🏢" },
-  { value: "Photography",              emoji: "📸" },
-  { value: "Digital Services",         emoji: "🌐" },
-  { value: "Retail Store",             emoji: "🏪" },
-  { value: "E-commerce Brand",         emoji: "🛒" },
-  { value: "Personal Brand / Creator", emoji: "🎯" },
-  { value: "Other",                    emoji: "🔮" },
-] as const;
-
-// ─── Platform data ────────────────────────────────────────────────────────────
-
-const PLATFORMS = [
-  { value: "Instagram Shop",    emoji: "📱" },
-  { value: "Own Website",       emoji: "🌐" },
-  { value: "Offline / Retail",  emoji: "🏢" },
-  { value: "Amazon",            emoji: "📦" },
-  { value: "Flipkart",          emoji: "🛍️" },
-  { value: "Meesho",            emoji: "🏪" },
-  { value: "Myntra",            emoji: "👗" },
-  { value: "Shopify Store",     emoji: "🟢" },
-  { value: "Facebook Shop",     emoji: "📘" },
-  { value: "WhatsApp Business", emoji: "💬" },
-  { value: "Etsy",              emoji: "🎨" },
-  { value: "Other",             emoji: "🔮" },
-] as const;
-
-// ─── Tone data ────────────────────────────────────────────────────────────────
-
-type Tone =
-  | "Professional" | "Playful" | "Inspirational" | "Bold"
-  | "Minimal" | "Luxury" | "Witty";
-
-const TONES: { value: Tone; tagline: string; example: string }[] = [
-  { value: "Professional",  tagline: "Clear and authoritative",  example: "Trusted by thousands." },
-  { value: "Playful",       tagline: "Fun and energetic",        example: "Let's gooo! 🚀" },
-  { value: "Inspirational", tagline: "Motivating and uplifting", example: "You were born for this." },
-  { value: "Bold",          tagline: "Direct and confident",     example: "No fluff. Just results." },
-  { value: "Minimal",       tagline: "Clean and understated",    example: "Less is more." },
-  { value: "Luxury",        tagline: "Elegant and premium",      example: "Crafted for the discerning few." },
-  { value: "Witty",         tagline: "Clever with humour",       example: "We take our coffee seriously." },
-];
-
-// ─── Animation ────────────────────────────────────────────────────────────────
-
-const EASE_OUT: [number, number, number, number] = [0.22, 1, 0.36, 1];
-
-const slideVariants = {
-  enter: (dir: number) => ({ x: dir > 0 ? 60 : -60, opacity: 0 }),
-  center: {
-    x: 0,
-    opacity: 1,
-    transition: { duration: 0.38, ease: EASE_OUT },
-  },
-  exit: (dir: number) => ({
-    x: dir > 0 ? -60 : 60,
-    opacity: 0,
-    transition: { duration: 0.22, ease: "easeIn" as const },
-  }),
-};
+import { INDUSTRIES, PLATFORMS, TONES, MAX_TONES, type Tone } from "@/lib/brandOptions";
+import type { Brand as BrandType } from "@/types";
 
 const TOTAL_STEPS = 7;
 
-// ─── Step Indicator ───────────────────────────────────────────────────────────
-
-function StepIndicator({ step }: { step: number }) {
-  const steps = Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1);
-  return (
-    <div className="flex items-center justify-center mb-12">
-      {steps.map((s, i) => {
-        const done = step > s;
-        const current = step === s;
-
-        return (
-          <Fragment key={s}>
-            <motion.div
-              key={`c-${s}-${done}`}
-              initial={{ scale: done ? 1.25 : 1 }}
-              animate={{ scale: 1 }}
-              transition={{ type: "spring", stiffness: 500, damping: 15 }}
-              className={`relative w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
-                done
-                  ? "bg-[#1A7A4A]"
-                  : current
-                  ? "border-2 border-[#1A7A4A]"
-                  : "border-2 border-gray-200"
-              }`}
-            >
-              {done && (
-                <svg viewBox="0 0 12 10" fill="none" className="w-3 h-2.5">
-                  <path
-                    d="M1 5l3.5 3.5L11 1"
-                    stroke="white"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              )}
-              {current && (
-                <motion.div
-                  animate={{ scale: [1, 1.4, 1], opacity: [0.9, 0.4, 0.9] }}
-                  transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
-                  className="w-2.5 h-2.5 rounded-full bg-[#1A7A4A]"
-                />
-              )}
-            </motion.div>
-
-            {i < TOTAL_STEPS - 1 && (
-              <div className="relative mx-1 h-0.5 w-6 bg-gray-100 rounded-full overflow-hidden">
-                <motion.div
-                  className="absolute inset-y-0 left-0 bg-[#1A7A4A] rounded-full"
-                  initial={false}
-                  animate={{ width: done ? "100%" : "0%" }}
-                  transition={{ duration: 0.4, ease: EASE_OUT }}
-                />
-              </div>
-            )}
-          </Fragment>
-        );
-      })}
-    </div>
-  );
-}
+const STEP_TITLES = ["Name", "Logo", "Industry", "Channels", "Voice", "Audience", "Online presence"];
 
 // ─── Shared UI ────────────────────────────────────────────────────────────────
 
 function BackBtn({ onClick }: { onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="mb-8 flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-600 transition-colors"
-    >
+    <button type="button" className="bd-back" onClick={onClick}>
       ← Back
     </button>
   );
 }
 
-function ContinueBtn({
-  label = "Continue",
-  disabled,
-  loading,
-  onClick,
-}: {
-  label?: string;
-  disabled?: boolean;
-  loading?: boolean;
-  onClick?: () => void;
-}) {
+function ContinueBtn({ label = "Continue", disabled, loading, onClick }: { label?: string; disabled?: boolean; loading?: boolean; onClick?: () => void }) {
   return (
-    <div className="flex justify-center mt-8">
-      <button
-        type="button"
-        disabled={disabled || loading}
-        onClick={onClick}
-        className="w-full max-w-xs flex items-center justify-center gap-2 bg-[#1A7A4A] hover:bg-[#145C38] text-white font-semibold rounded-xl py-3.5 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        {loading && <Loader2 size={15} className="animate-spin" />}
-        {label}
-      </button>
-    </div>
+    <button type="button" className="bd-btn bd-btn-primary" disabled={disabled || loading} onClick={onClick}>
+      {loading && <Loader2 size={17} className="bd-spin-icon" />}
+      {label}
+    </button>
   );
 }
 
-function SkipBtn({ onClick }: { onClick: () => void }) {
+function SkipBtn({ onClick, label = "I'll add this later →" }: { onClick: () => void; label?: string }) {
   return (
-    <div className="flex justify-center mt-3">
-      <button
-        type="button"
-        onClick={onClick}
-        className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
-      >
-        I will add this later →
-      </button>
-    </div>
+    <button type="button" className="bd-linkbtn" onClick={onClick}>
+      {label}
+    </button>
   );
 }
 
-// ─── Toggle Tile ──────────────────────────────────────────────────────────────
-
-function ToggleTile({
-  emoji,
-  label,
-  selected,
-  multi,
-  onClick,
-}: {
-  emoji: string;
-  label: string;
-  selected: boolean;
-  multi?: boolean;
-  onClick: () => void;
-}) {
+function ToggleTile({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
   return (
-    <motion.button
-      type="button"
-      whileTap={{ scale: 0.95 }}
-      onClick={onClick}
-      className={`relative flex flex-col items-center justify-center gap-2 rounded-xl border-2 py-4 px-3 transition-all ${
-        selected
-          ? "border-[#1A7A4A] bg-[#E8F5EE] text-[#1A7A4A]"
-          : "border-gray-100 bg-gray-50 text-gray-600 hover:border-gray-200 hover:bg-gray-100"
-      }`}
-    >
-      <AnimatePresence>
-        {selected && (
-          <motion.div
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 500, damping: 20 }}
-            className={`absolute top-1.5 right-1.5 w-4 h-4 rounded-full flex items-center justify-center ${
-              multi ? "bg-[#1A7A4A]" : "bg-[#1A7A4A]"
-            }`}
-          >
-            <Check size={9} strokeWidth={3} className="text-white" />
-          </motion.div>
-        )}
-      </AnimatePresence>
-      <span className="text-2xl leading-none select-none">{emoji}</span>
-      <span className="text-[11px] font-medium text-center leading-tight">{label}</span>
-    </motion.button>
+    <button type="button" className={"bd-tile" + (selected ? " is-on" : "")} onClick={onClick} aria-pressed={selected}>
+      {selected && <span className="tick"><Check size={11} strokeWidth={3} /></span>}
+      <span>{label}</span>
+    </button>
   );
 }
 
-// ─── AI Generate Button ───────────────────────────────────────────────────────
-
-function AiGenerateBtn({
-  generating,
-  generated,
-  onClick,
-}: {
-  generating: boolean;
-  generated: boolean;
-  onClick: () => void;
-}) {
+function AiGenerateBtn({ generating, generated, onClick }: { generating: boolean; generated: boolean; onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={generating}
-      className={cn(
-        "flex items-center gap-1.5 text-xs font-semibold transition-colors disabled:opacity-60",
-        "text-[#1A7A4A] hover:text-[#145C38]"
-      )}
-    >
+    <button type="button" className="bd-mini-link" onClick={onClick} disabled={generating}>
       {generating ? (
         <>
-          <Loader2 size={12} className="animate-spin" />
-          <span>Generating…</span>
+          <Loader2 size={13} className="bd-spin-icon" /> Refining…
         </>
       ) : generated ? (
         <>
-          <RefreshCw size={12} />
-          <span>Regenerate</span>
+          <RefreshCw size={13} /> Refine again
         </>
       ) : (
-        <motion.span
-          animate={{ opacity: [1, 0.45, 1] }}
-          transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
-          className="flex items-center gap-1.5"
-        >
-          <Sparkles size={12} />
-          Let AI fill this for you
-        </motion.span>
+        <>
+          <Sparkles size={13} /> Let AI refine this
+        </>
       )}
     </button>
   );
@@ -312,6 +84,7 @@ export default function BrandSetupPage() {
   const [step, setStep] = useState(1);
   const [direction, setDirection] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [analysing, setAnalysing] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
   // Step 1: Brand Name
@@ -333,7 +106,10 @@ export default function BrandSetupPage() {
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([]);
 
   // Step 5: Tone
-  const [tone, setTone] = useState<Tone | null>(null);
+  const [tones, setTones] = useState<Tone[]>([]);
+  const tone = tones.length ? tones.join(", ") : null; // lead tone first
+  const toggleTone = (t: Tone) =>
+    setTones((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : cur.length >= MAX_TONES ? cur : [...cur, t]));
 
   // Step 6: Target Audience + Brand Brief
   const [targetAudience, setTargetAudience] = useState("");
@@ -357,7 +133,7 @@ export default function BrandSetupPage() {
     }
 
     apiClient
-      .get<{ success: boolean; data: Brand | null }>("/api/brand")
+      .get<{ success: boolean; data: BrandType | null }>("/api/brand")
       .then((res) => {
         if (res.data.success && res.data.data) {
           router.replace("/dashboard");
@@ -371,13 +147,8 @@ export default function BrandSetupPage() {
   }, [router, isAuthLoading, isAuthenticated]);
 
   const filteredIndustries = useMemo(
-    () =>
-      searchQuery.trim()
-        ? INDUSTRIES.filter((i) =>
-            i.value.toLowerCase().includes(searchQuery.toLowerCase())
-          )
-        : INDUSTRIES,
-    [searchQuery]
+    () => (searchQuery.trim() ? INDUSTRIES.filter((i) => i.value.toLowerCase().includes(searchQuery.toLowerCase())) : INDUSTRIES),
+    [searchQuery],
   );
 
   const resolvedIndustry = customText.trim() || selectedTile;
@@ -393,9 +164,7 @@ export default function BrandSetupPage() {
   }
 
   function togglePlatform(value: string) {
-    setSelectedPlatforms((prev) =>
-      prev.includes(value) ? prev.filter((p) => p !== value) : [...prev, value]
-    );
+    setSelectedPlatforms((prev) => (prev.includes(value) ? prev.filter((p) => p !== value) : [...prev, value]));
   }
 
   const handleLogoUpload = useCallback(async (file: File) => {
@@ -414,11 +183,7 @@ export default function BrandSetupPage() {
     try {
       const formData = new FormData();
       formData.append("logo", file);
-      const res = await apiClient.post<{
-        success: boolean;
-        data: { logoUrl: string };
-        error: string | null;
-      }>("/api/uploads/brand-logo", formData, {
+      const res = await apiClient.post<{ success: boolean; data: { logoUrl: string }; error: string | null }>("/api/uploads/brand-logo", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       if (res.data.success && res.data.data) {
@@ -427,8 +192,17 @@ export default function BrandSetupPage() {
         setLogoUploadError(res.data.error ?? "Upload failed. Please try again.");
       }
     } catch (err: unknown) {
-      const e = err as { response?: { data?: { error?: string } }; message?: string };
-      setLogoUploadError(e.response?.data?.error ?? e.message ?? "Upload failed.");
+      if (isUnreachable(err)) {
+        // upload service not reachable: keep the logo in the browser so the step still completes
+        try {
+          setLogoUrl(await fileToLogoDataUrl(file));
+        } catch {
+          setLogoUploadError("Couldn't read that image. Try another file.");
+        }
+      } else {
+        const e = err as { response?: { data?: { error?: string } } };
+        setLogoUploadError(e.response?.data?.error ?? "That file couldn't be used. Try another one.");
+      }
     } finally {
       setLogoUploading(false);
     }
@@ -440,49 +214,45 @@ export default function BrandSetupPage() {
     else setBriefGenerating(true);
 
     try {
-      const res = await apiClient.post<{
-        success: boolean;
-        data: { text: string };
-        error: string | null;
-      }>("/api/brand/generate-field", {
+      const res = await apiClient.post<{ success: boolean; data: { text: string }; error: string | null }>("/api/brand/generate-field", {
         brandName: brandName.trim() || "My Brand",
         industry: resolvedIndustry,
         tone,
         platforms: selectedPlatforms,
         field,
+        draft: (field === "targetAudience" ? targetAudience : brandBrief).trim() || undefined,
       });
 
-      if (res.data.success && res.data.data?.text) {
-        if (field === "targetAudience") {
-          setTargetAudience(res.data.data.text);
-          setAudienceGenerated(true);
-        } else {
-          setBrandBrief(res.data.data.text.slice(0, 500));
-          setBriefGenerated(true);
-        }
+      const text = res.data.success && res.data.data?.text ? res.data.data.text : fallbackText(field, { brandName, industry: resolvedIndustry, tone, platforms: selectedPlatforms }, field === "targetAudience" ? targetAudience : brandBrief);
+      if (field === "targetAudience") {
+        setTargetAudience(text);
+        setAudienceGenerated(true);
+      } else {
+        setBrandBrief(text.slice(0, 500));
+        setBriefGenerated(true);
       }
     } catch {
-      // silently fail — user can retry
+      // AI service unavailable: write a sensible starting draft locally the user can edit
+      const text = fallbackText(field, { brandName, industry: resolvedIndustry, tone, platforms: selectedPlatforms }, field === "targetAudience" ? targetAudience : brandBrief);
+      if (field === "targetAudience") {
+        setTargetAudience(text);
+        setAudienceGenerated(true);
+      } else {
+        setBrandBrief(text.slice(0, 500));
+        setBriefGenerated(true);
+      }
     } finally {
       if (field === "targetAudience") setAudienceGenerating(false);
       else setBriefGenerating(false);
     }
   }
 
-  async function handleSubmit(opts?: {
-    instagramUrl?: string;
-    websiteUrl?: string;
-    googleBusinessUrl?: string;
-  }) {
+  async function handleSubmit(opts?: { instagramUrl?: string; websiteUrl?: string; googleBusinessUrl?: string }) {
     if (!resolvedIndustry || !tone) return;
     setApiError(null);
     setIsSubmitting(true);
     try {
-      const res = await apiClient.post<{
-        success: boolean;
-        data: Brand;
-        error: string | null;
-      }>("/api/brand", {
+      const res = await apiClient.post<{ success: boolean; data: BrandType; error: string | null }>("/api/brand", {
         brandName: brandName.trim(),
         industry: resolvedIndustry,
         targetAudience: targetAudience.trim(),
@@ -499,10 +269,27 @@ export default function BrandSetupPage() {
         router.push("/strategy");
       }
     } catch (err: unknown) {
-      const message =
-        (err as { response?: { data?: { error?: string } } })?.response?.data
-          ?.error ?? "Something went wrong. Please try again.";
-      setApiError(message);
+      if (isUnreachable(err)) {
+        // server not reachable: keep the brand in this browser and carry on to the dashboard
+        const local: BrandType = {
+          id: "local-" + Date.now(),
+          userId: "local",
+          brandName: brandName.trim(),
+          industry: resolvedIndustry,
+          tone,
+          targetAudience: targetAudience.trim(),
+          logoUrl: logoUrl || null,
+          platforms: selectedPlatforms,
+          brandBrief: brandBrief.trim() || null,
+          strategyApproved: false,
+        };
+        saveOfflineBrand(local);
+        setBrand(local);
+        router.push("/dashboard");
+      } else {
+        const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+        setApiError(message ?? "Please check your details and try again.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -510,556 +297,403 @@ export default function BrandSetupPage() {
 
   if (isChecking) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <Loader2 size={24} className="animate-spin text-[#1A7A4A]" />
+      <div className="bd-center-screen">
+        <div className="bd-spinner" />
       </div>
     );
   }
 
+  const initial = (brandName.trim()[0] ?? "B").toUpperCase();
+  const toneInfo = tones.length ? { value: tones.join(" · ") } : null;
+
   return (
-    <div className="min-h-screen bg-white flex flex-col">
-      <div className="flex-1 flex flex-col items-center justify-center px-4 py-16">
-        <div className="w-full max-w-2xl">
-          <StepIndicator step={step} />
+    <div className="bd-onb-grid">
+      {/* live preview */}
+      <aside className="bd-onb-side">
+        <div style={{ height: 34 }}>
+          <a href="/" aria-label="BrandefAI home" style={{ display: "block", height: "100%" }}>
+            <Brand tone="light" size={22} />
+          </a>
+        </div>
 
-          <AnimatePresence custom={direction} mode="wait">
-            <motion.div
-              key={step}
-              custom={direction}
-              variants={slideVariants}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              className="w-full"
-            >
+        <div>
+          <h2>Let&apos;s build your brand profile</h2>
+          <p className="sub">It takes about two minutes. Everything BrandefAI writes and creates will be based on it.</p>
+        </div>
 
-              {/* ── STEP 1: Brand Name ─────────────────────────────────────── */}
-              {step === 1 && (
-                <div>
-                  <h1 className="text-3xl font-bold text-[#1A2E44] mb-2">
-                    What&apos;s your brand called?
-                  </h1>
-                  <p className="text-sm text-gray-400 mb-8">
-                    This is what will appear on all your generated content
-                  </p>
-
-                  <div className="mb-8">
-                    <label className="block text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">
-                      Brand Name
-                    </label>
-                    <input
-                      type="text"
-                      value={brandName}
-                      onChange={(e) => setBrandName(e.target.value)}
-                      placeholder="e.g. Urban Threads"
-                      maxLength={80}
-                      autoFocus
-                      className="block w-full text-xl border-b-2 border-gray-200 focus:border-[#1A7A4A] outline-none pb-3 pt-1 bg-transparent transition-colors placeholder:text-gray-200 text-[#1A2E44]"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && brandName.trim().length >= 2) goNext();
-                      }}
-                    />
-                  </div>
-
-                  <ContinueBtn
-                    disabled={brandName.trim().length < 2}
-                    onClick={goNext}
-                  />
-                </div>
+        <div className="bd-onb-preview" aria-label="Brand preview">
+          <div className="top">
+            <div className="bd-onb-logo">
+              {logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={logoUrl} alt="" />
+              ) : (
+                initial
               )}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <h3 style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{brandName.trim() || "Your brand"}</h3>
+              <span className="bd-hint">{resolvedIndustry ?? "Industry"}</span>
+            </div>
+          </div>
+          <div className="row">
+            {toneInfo ? <span className="bd-chip p">{toneInfo.value}</span> : <span className="bd-chip">Voice</span>}
+            {selectedPlatforms.slice(0, 3).map((p) => (
+              <span key={p} className="bd-chip">{p}</span>
+            ))}
+            {selectedPlatforms.length > 3 && <span className="bd-chip">+{selectedPlatforms.length - 3}</span>}
+          </div>
+          <p className="quote">
+            {targetAudience.trim() ? targetAudience.trim().slice(0, 140) + (targetAudience.length > 140 ? "…" : "") : "Your audience description will appear here."}
+          </p>
+        </div>
+      </aside>
 
-              {/* ── STEP 2: Logo Upload ───────────────────────────────────── */}
-              {step === 2 && (
-                <div>
-                  <BackBtn onClick={goBack} />
-                  <h1 className="text-3xl font-bold text-[#1A2E44] mb-2">
-                    Upload your brand logo
-                  </h1>
-                  <p className="text-sm text-gray-400 mb-6">
-                    PNG or SVG with transparent background recommended · Max 2 MB
-                  </p>
+      {/* wizard */}
+      <main className="bd-onb-main">
+        <div className="bd-onb-top">
+          <div className="bd-stepper" role="progressbar" aria-valuemin={1} aria-valuemax={TOTAL_STEPS} aria-valuenow={step}>
+            <b>Step {step} of {TOTAL_STEPS}</b>
+            <div className="bar"><span style={{ width: `${(step / TOTAL_STEPS) * 100}%` }} /></div>
+          </div>
+          <span className="bd-chip">{STEP_TITLES[step - 1]}</span>
+        </div>
 
+        <div className="bd-onb-body">
+          <div key={step} className={"bd-wizard" + (direction < 0 ? " back" : "")}>
+            {/* ── STEP 1: Brand Name ───────────────────────────────────── */}
+            {step === 1 && (
+              <div>
+                <h1>What&apos;s your brand called?</h1>
+                <p className="lead">This is the name that will appear on all your generated content.</p>
+                <div className="bd-field">
+                  <label className="bd-label" htmlFor="bs-name">Brand name</label>
                   <input
-                    ref={logoFileRef}
-                    type="file"
-                    accept="image/png,image/svg+xml,image/jpeg,image/webp"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) handleLogoUpload(file);
+                    id="bs-name"
+                    className="bd-input"
+                    type="text"
+                    value={brandName}
+                    onChange={(e) => setBrandName(e.target.value)}
+                    placeholder="e.g. Urban Threads"
+                    maxLength={80}
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && brandName.trim().length >= 2) goNext();
                     }}
                   />
+                </div>
+                <div className="bd-wiz-actions">
+                  <ContinueBtn disabled={brandName.trim().length < 2} onClick={goNext} />
+                </div>
+              </div>
+            )}
 
-                  {!logoUrl ? (
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => !logoUploading && logoFileRef.current?.click()}
-                      onKeyDown={(e) =>
-                        (e.key === "Enter" || e.key === " ") &&
-                        !logoUploading &&
-                        logoFileRef.current?.click()
-                      }
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        setLogoDragOver(true);
-                      }}
-                      onDragLeave={() => setLogoDragOver(false)}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        setLogoDragOver(false);
-                        const file = e.dataTransfer.files?.[0];
-                        if (file) handleLogoUpload(file);
-                      }}
-                      className={cn(
-                        "flex flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed py-14 px-8 cursor-pointer select-none transition-all duration-150",
-                        logoUploading
-                          ? "border-[#1A7A4A]/40 bg-[#E8F5EE]/50 cursor-default"
-                          : logoDragOver
-                          ? "border-[#1A7A4A] bg-[#E8F5EE]/60"
-                          : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-                      )}
-                    >
-                      {logoUploading ? (
-                        <>
-                          <Loader2 size={28} className="text-[#1A7A4A] animate-spin" />
-                          <p className="text-sm text-[#1A7A4A] font-medium">Uploading…</p>
-                        </>
-                      ) : (
-                        <>
-                          <div
-                            className={cn(
-                              "w-16 h-16 rounded-2xl flex items-center justify-center transition-colors",
-                              logoDragOver
-                                ? "bg-[#E8F5EE] text-[#1A7A4A]"
-                                : "bg-gray-100 text-gray-400"
-                            )}
-                          >
-                            <Upload size={24} />
-                          </div>
-                          <div className="text-center">
-                            <p
-                              className={cn(
-                                "text-sm font-semibold transition-colors",
-                                logoDragOver ? "text-[#1A7A4A]" : "text-gray-600"
-                              )}
-                            >
-                              Click to upload or drag &amp; drop
-                            </p>
-                            <p className="text-xs text-gray-400 mt-1">PNG · SVG · JPEG · WebP</p>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="rounded-2xl bg-white border-2 border-gray-100 flex items-center justify-center p-6 h-36">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={logoUrl}
-                            alt="Logo on light background"
-                            className="max-h-full max-w-full object-contain"
-                          />
-                        </div>
-                        <div className="rounded-2xl bg-[#1A2E44] flex items-center justify-center p-6 h-36">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={logoUrl}
-                            alt="Logo on dark background"
-                            className="max-h-full max-w-full object-contain"
-                          />
-                        </div>
-                      </div>
+            {/* ── STEP 2: Logo Upload ──────────────────────────────────── */}
+            {step === 2 && (
+              <div>
+                <BackBtn onClick={goBack} />
+                <h1>Upload your brand logo</h1>
+                <p className="lead">PNG or SVG with a transparent background works best. Max 2 MB.</p>
 
-                      <div className="flex items-center justify-between px-1">
-                        <div className="flex items-center gap-2 text-sm text-[#1A7A4A] font-medium">
-                          <div className="w-5 h-5 rounded-full bg-[#1A7A4A] flex items-center justify-center shrink-0">
-                            <Check size={11} strokeWidth={3} className="text-white" />
-                          </div>
-                          Logo uploaded successfully
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setLogoUrl(null);
-                            setLogoUploadError(null);
-                            if (logoFileRef.current) logoFileRef.current.value = "";
-                          }}
-                          className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-red-500 transition-colors"
-                        >
-                          <X size={13} />
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                <input
+                  ref={logoFileRef}
+                  type="file"
+                  hidden
+                  accept="image/png,image/svg+xml,image/jpeg,image/webp"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleLogoUpload(file);
+                  }}
+                />
 
-                  <AnimatePresence>
-                    {logoUploadError && (
-                      <motion.p
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="mt-3 text-xs text-red-500 bg-red-50 rounded-xl px-4 py-2.5 overflow-hidden"
-                      >
-                        {logoUploadError}
-                      </motion.p>
+                {!logoUrl ? (
+                  <div
+                    className={"bd-drop" + (logoDragOver ? " is-over" : "")}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => !logoUploading && logoFileRef.current?.click()}
+                    onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && !logoUploading && logoFileRef.current?.click()}
+                    onDragOver={(e) => { e.preventDefault(); setLogoDragOver(true); }}
+                    onDragLeave={() => setLogoDragOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setLogoDragOver(false);
+                      const file = e.dataTransfer.files?.[0];
+                      if (file) handleLogoUpload(file);
+                    }}
+                  >
+                    {logoUploading ? (
+                      <>
+                        <Loader2 size={28} className="bd-spin-icon" style={{ color: "var(--p)" }} />
+                        <b>Uploading…</b>
+                      </>
+                    ) : (
+                      <>
+                        <span className="ico"><Upload size={24} /></span>
+                        <b>Click to upload or drag &amp; drop</b>
+                        <span>PNG · SVG · JPEG · WebP</span>
+                      </>
                     )}
-                  </AnimatePresence>
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gap: 14 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <div className="bd-logo-box">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={logoUrl} alt="Logo on light background" />
+                      </div>
+                      <div className="bd-logo-box dark">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={logoUrl} alt="Logo on dark background" />
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                      <span className="bd-chip g"><Check size={12} strokeWidth={3} /> Logo uploaded</span>
+                      <button
+                        type="button"
+                        className="bd-linkbtn"
+                        onClick={() => {
+                          setLogoUrl(null);
+                          setLogoUploadError(null);
+                          if (logoFileRef.current) logoFileRef.current.value = "";
+                        }}
+                      >
+                        Remove logo
+                      </button>
+                    </div>
+                  </div>
+                )}
 
+                {logoUploadError && <p className="bd-error">{logoUploadError}</p>}
+
+                <div className="bd-wiz-actions">
                   <ContinueBtn disabled={logoUploading} onClick={goNext} />
                   <SkipBtn onClick={goNext} />
                 </div>
-              )}
+              </div>
+            )}
 
-              {/* ── STEP 3: Industry ──────────────────────────────────────── */}
-              {step === 3 && (
-                <div>
-                  <BackBtn onClick={goBack} />
-                  <h1 className="text-3xl font-bold text-[#1A2E44] mb-2">
-                    What industry are you in?
-                  </h1>
-                  <p className="text-xs text-gray-400 mb-4">
-                    Pick a category — or type your exact niche below
-                  </p>
+            {/* ── STEP 3: Industry ─────────────────────────────────────── */}
+            {step === 3 && (
+              <div>
+                <BackBtn onClick={goBack} />
+                <h1>What industry are you in?</h1>
+                <p className="lead">Pick a category, or type your exact niche below.</p>
 
-                  <div className="relative mb-4">
-                    <Search
-                      size={14}
-                      className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Search industries…"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-4 py-2.5 text-sm rounded-xl border border-gray-200 bg-gray-50 outline-none focus:border-[#1A7A4A] focus:bg-white transition-colors placeholder:text-gray-300 text-gray-700"
-                    />
-                  </div>
+                <div className="bd-search">
+                  <Search size={16} />
+                  <input className="bd-input" type="text" placeholder="Search industries…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-                    {filteredIndustries.map((ind) => {
-                      const isSelected = selectedTile === ind.value && !customText.trim();
-                      return (
-                        <ToggleTile
-                          key={ind.value}
-                          emoji={ind.emoji}
-                          label={ind.value}
-                          selected={isSelected}
-                          onClick={() => {
-                            setSelectedTile(ind.value);
-                            setCustomText("");
-                            setSearchQuery("");
-                          }}
-                        />
-                      );
-                    })}
-                    {filteredIndustries.length === 0 && (
-                      <div className="col-span-2 md:col-span-4 py-8 text-center text-sm text-gray-400">
-                        No match — type your industry in the field below ↓
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="relative">
-                    <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">
-                      My industry is not listed — type it here
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        placeholder="e.g. Organic Cotton Kidswear, Pet Accessories…"
-                        value={customText}
-                        onChange={(e) => {
-                          setCustomText(e.target.value);
-                          if (e.target.value.trim()) setSelectedTile(null);
+                <div className="bd-tiles">
+                  {filteredIndustries.map((ind) => {
+                    const isSelected = selectedTile === ind.value && !customText.trim();
+                    return (
+                      <ToggleTile
+                        key={ind.value}
+                        label={ind.value}
+                        selected={isSelected}
+                        onClick={() => {
+                          setSelectedTile(ind.value);
+                          setCustomText("");
+                          setSearchQuery("");
                         }}
-                        maxLength={100}
-                        className="w-full px-4 py-3 pr-10 text-sm rounded-xl border border-gray-200 bg-gray-50 outline-none focus:border-[#1A7A4A] focus:bg-white transition-colors placeholder:text-gray-300 text-gray-700"
                       />
-                      <AnimatePresence>
-                        {customText.trim() && (
-                          <motion.div
-                            initial={{ scale: 0, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0, opacity: 0 }}
-                            transition={{ type: "spring", stiffness: 400, damping: 20 }}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-[#1A7A4A] flex items-center justify-center"
-                          >
-                            <Check size={10} strokeWidth={3} className="text-white" />
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                    {customText.trim() && (
-                      <p className="mt-2 text-xs text-[#1A7A4A] font-medium">
-                        Will be saved as: &ldquo;{customText.trim()}&rdquo;
-                      </p>
-                    )}
-                  </div>
+                    );
+                  })}
+                  {filteredIndustries.length === 0 && <div className="bd-empty" style={{ gridColumn: "1 / -1" }}>No match. Type your industry in the field below.</div>}
+                </div>
 
+                <div className="bd-field" style={{ marginTop: 22 }}>
+                  <label className="bd-label" htmlFor="bs-custom">My industry isn&apos;t listed</label>
+                  <input
+                    id="bs-custom"
+                    className="bd-input"
+                    type="text"
+                    placeholder="e.g. Organic cotton kidswear, pet accessories…"
+                    value={customText}
+                    onChange={(e) => {
+                      setCustomText(e.target.value);
+                      if (e.target.value.trim()) setSelectedTile(null);
+                    }}
+                    maxLength={100}
+                  />
+                  {customText.trim() && <p className="bd-hint">Will be saved as &ldquo;{customText.trim()}&rdquo;</p>}
+                </div>
+
+                <div className="bd-wiz-actions">
                   <ContinueBtn disabled={!resolvedIndustry} onClick={goNext} />
                 </div>
-              )}
+              </div>
+            )}
 
-              {/* ── STEP 4: Where do you sell? ────────────────────────────── */}
-              {step === 4 && (
-                <div>
-                  <BackBtn onClick={goBack} />
-                  <h1 className="text-3xl font-bold text-[#1A2E44] mb-2">
-                    Where do you sell?
-                  </h1>
-                  <p className="text-sm text-gray-400 mb-6">
-                    Select all that apply — this helps tailor your content format
+            {/* ── STEP 4: Where do you sell? ───────────────────────────── */}
+            {step === 4 && (
+              <div>
+                <BackBtn onClick={goBack} />
+                <h1>Where do you sell?</h1>
+                <p className="lead">Select all that apply. This helps tailor your content formats.</p>
+
+                <div className="bd-tiles">
+                  {PLATFORMS.map((p) => (
+                    <ToggleTile key={p.value} label={p.value} selected={selectedPlatforms.includes(p.value)} onClick={() => togglePlatform(p.value)} />
+                  ))}
+                </div>
+
+                {selectedPlatforms.length > 0 && (
+                  <p className="bd-hint" style={{ marginTop: 14 }}>
+                    {selectedPlatforms.length} platform{selectedPlatforms.length > 1 ? "s" : ""} selected
                   </p>
+                )}
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {PLATFORMS.map((p) => (
-                      <ToggleTile
-                        key={p.value}
-                        emoji={p.emoji}
-                        label={p.value}
-                        selected={selectedPlatforms.includes(p.value)}
-                        multi
-                        onClick={() => togglePlatform(p.value)}
-                      />
-                    ))}
-                  </div>
-
-                  {selectedPlatforms.length > 0 && (
-                    <p className="mt-4 text-xs text-[#1A7A4A] font-medium">
-                      {selectedPlatforms.length} platform{selectedPlatforms.length > 1 ? "s" : ""} selected
-                    </p>
-                  )}
-
+                <div className="bd-wiz-actions">
                   <ContinueBtn onClick={goNext} />
                   <SkipBtn onClick={goNext} />
                 </div>
-              )}
+              </div>
+            )}
 
-              {/* ── STEP 5: Brand Voice ───────────────────────────────────── */}
-              {step === 5 && (
-                <div>
-                  <BackBtn onClick={goBack} />
-                  <h1 className="text-3xl font-bold text-[#1A2E44] mb-6">
-                    What is your brand&apos;s voice?
-                  </h1>
-                  <div className="grid grid-cols-1 gap-2.5 max-w-lg mx-auto">
-                    {TONES.map((t) => {
-                      const selected = tone === t.value;
-                      return (
-                        <button
-                          key={t.value}
-                          type="button"
-                          onClick={() => setTone(t.value)}
-                          className={`flex items-center gap-4 rounded-xl border-2 px-5 py-4 text-left transition-all ${
-                            selected
-                              ? "border-[#1A7A4A] bg-[#E8F5EE]"
-                              : "border-gray-100 bg-gray-50 hover:border-gray-200 hover:bg-gray-100"
-                          }`}
-                        >
-                          <div className="flex-1 min-w-0">
-                            <div
-                              className={`font-semibold text-sm ${
-                                selected ? "text-[#1A7A4A]" : "text-[#1A2E44]"
-                              }`}
-                            >
-                              {t.value}
-                            </div>
-                            <div className="text-xs text-gray-400 mt-0.5">{t.tagline}</div>
-                          </div>
-                          <div className="text-xs text-gray-400 italic text-right shrink-0 max-w-[140px]">
-                            &ldquo;{t.example}&rdquo;
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+            {/* ── STEP 5: Brand Voice ──────────────────────────────────── */}
+            {step === 5 && (
+              <div>
+                <BackBtn onClick={goBack} />
+                <h1>What is your brand&apos;s voice?</h1>
+                <p className="lead">Choose up to {MAX_TONES} tones that sound like you. The first one you pick leads, the others add flavour. You can change this later in Settings.</p>
 
-                  <ContinueBtn disabled={!tone} onClick={goNext} />
+                <p className="bd-tone-count" aria-live="polite">{tones.length} of {MAX_TONES} selected</p>
+                <div className="bd-tones">
+                  {TONES.map((t) => {
+                    const idx = tones.indexOf(t.value);
+                    const on = idx >= 0;
+                    const full = !on && tones.length >= MAX_TONES;
+                    return (
+                      <button key={t.value} type="button" className={"bd-tone" + (on ? " is-on" : "")} onClick={() => toggleTone(t.value)} aria-pressed={on} disabled={full}>
+                        <span className="th">
+                          <b>{t.value}</b>
+                          {on && <span className="ord">{idx === 0 ? "Lead" : idx + 1}</span>}
+                        </span>
+                        <span className="tg">{t.tagline}</span>
+                        <span className="dt">{t.detail}</span>
+                        <span className="bf">Best for: {t.bestFor}</span>
+                        <span className="ex">&ldquo;{t.example}&rdquo;</span>
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
 
-              {/* ── STEP 6: Target Audience + Brand Brief ─────────────────── */}
-              {step === 6 && (
-                <div>
-                  <BackBtn onClick={goBack} />
-                  <h1 className="text-3xl font-bold text-[#1A2E44] mb-2">
-                    Tell us about your audience
-                  </h1>
-                  <p className="text-sm text-gray-400 mb-6">
-                    The more specific you are, the better the AI output
-                  </p>
+                <div className="bd-wiz-actions">
+                  <ContinueBtn disabled={tones.length === 0} onClick={goNext} />
+                </div>
+              </div>
+            )}
 
-                  <div className="space-y-6">
-                    {/* Target Audience */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                          Who are you trying to reach?
-                        </label>
-                        <AiGenerateBtn
-                          generating={audienceGenerating}
-                          generated={audienceGenerated}
-                          onClick={() => handleGenerateField("targetAudience")}
-                        />
-                      </div>
-                      <textarea
-                        value={targetAudience}
-                        onChange={(e) => setTargetAudience(e.target.value.slice(0, 400))}
-                        rows={4}
-                        maxLength={400}
-                        placeholder="e.g. Women aged 25-40 who care about sustainable fashion and shop online for premium everyday wear…"
-                        className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 text-sm text-[#1A2E44] placeholder:text-gray-300 resize-none outline-none focus:border-[#1A7A4A] focus:bg-white transition-colors leading-relaxed"
-                      />
-                      <p className="text-right text-[11px] text-gray-300 mt-1">
-                        {targetAudience.length}/400
-                      </p>
-                    </div>
+            {/* ── STEP 6: Target Audience + Brand Brief ────────────────── */}
+            {step === 6 && (
+              <div>
+                <BackBtn onClick={goBack} />
+                <h1>Tell us about your audience</h1>
+                <p className="lead">The more specific you are, the better the AI output.</p>
 
-                    {/* Brand Brief */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                          Brand Brief{" "}
-                          <span className="normal-case font-normal text-gray-400">— optional</span>
-                        </label>
-                        <AiGenerateBtn
-                          generating={briefGenerating}
-                          generated={briefGenerated}
-                          onClick={() => handleGenerateField("brandBrief")}
-                        />
-                      </div>
-                      <textarea
-                        value={brandBrief}
-                        onChange={(e) => setBrandBrief(e.target.value.slice(0, 500))}
-                        rows={4}
-                        maxLength={500}
-                        placeholder="What does your brand do, sell, or stand for? e.g. We make sustainable activewear for women who want to look good and do good."
-                        className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 text-sm text-[#1A2E44] placeholder:text-gray-300 resize-none outline-none focus:border-[#1A7A4A] focus:bg-white transition-colors leading-relaxed"
-                      />
-                      <p className="text-right text-[11px] text-gray-300 mt-1">
-                        {brandBrief.length}/500
-                      </p>
-                    </div>
+                <div className="bd-field">
+                  <div className="bd-labelrow">
+                    <label className="bd-label" htmlFor="bs-aud">Who are you trying to reach?</label>
+                    <AiGenerateBtn generating={audienceGenerating} generated={audienceGenerated} onClick={() => handleGenerateField("targetAudience")} />
                   </div>
-
-                  <ContinueBtn
-                    disabled={targetAudience.trim().length < 10}
-                    onClick={goNext}
+                  <textarea
+                    id="bs-aud"
+                    className="bd-textarea"
+                    value={targetAudience}
+                    onChange={(e) => setTargetAudience(e.target.value.slice(0, 400))}
+                    rows={4}
+                    maxLength={400}
+                    placeholder="e.g. Women aged 25-40 who care about sustainable fashion and shop online for premium everyday wear…"
                   />
+                  <div className="bd-count" style={{ textAlign: "right" }}>{targetAudience.length}/400</div>
                 </div>
-              )}
 
-              {/* ── STEP 7: URL Enrichment ────────────────────────────────── */}
-              {step === 7 && (
-                <div>
-                  <BackBtn onClick={goBack} />
-                  <h1 className="text-3xl font-bold text-[#1A2E44] mb-2">
-                    Let us find your brand online
-                  </h1>
-                  <p className="text-sm text-gray-400 mb-8">
-                    We&apos;ll analyse your pages to create a richer brand profile. Completely optional.
-                  </p>
-
-                  <div className="space-y-5">
-                    {/* Instagram URL */}
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">
-                        Instagram Profile
-                      </label>
-                      <div className="relative">
-                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-base select-none">📱</span>
-                        <input
-                          type="url"
-                          value={instagramUrl}
-                          onChange={(e) => setInstagramUrl(e.target.value)}
-                          placeholder="https://instagram.com/yourbrand"
-                          className="w-full pl-10 pr-4 py-3 text-sm rounded-xl border border-gray-200 bg-gray-50 outline-none focus:border-[#1A7A4A] focus:bg-white transition-colors placeholder:text-gray-300 text-gray-700"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Website URL */}
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">
-                        Website
-                      </label>
-                      <div className="relative">
-                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-base select-none">🌐</span>
-                        <input
-                          type="url"
-                          value={websiteUrl}
-                          onChange={(e) => setWebsiteUrl(e.target.value)}
-                          placeholder="https://yourbrand.com"
-                          className="w-full pl-10 pr-4 py-3 text-sm rounded-xl border border-gray-200 bg-gray-50 outline-none focus:border-[#1A7A4A] focus:bg-white transition-colors placeholder:text-gray-300 text-gray-700"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Google Business Profile URL */}
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">
-                        Google Business Profile
-                      </label>
-                      <div className="relative">
-                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-base select-none">📍</span>
-                        <input
-                          type="url"
-                          value={googleBusinessUrl}
-                          onChange={(e) => setGoogleBusinessUrl(e.target.value)}
-                          placeholder="https://maps.google.com/maps?cid=..."
-                          className="w-full pl-10 pr-4 py-3 text-sm rounded-xl border border-gray-200 bg-gray-50 outline-none focus:border-[#1A7A4A] focus:bg-white transition-colors placeholder:text-gray-300 text-gray-700"
-                        />
-                      </div>
-                      <p className="mt-2 text-xs text-gray-400 leading-relaxed">
-                        We&apos;ll extract your address, contact number, business hours, and customer reviews
-                        to use in promotional posts and infographics
-                      </p>
-                    </div>
+                <div className="bd-field">
+                  <div className="bd-labelrow">
+                    <label className="bd-label" htmlFor="bs-brief">Brand brief <span className="bd-hint" style={{ fontWeight: 500 }}>— optional</span></label>
+                    <AiGenerateBtn generating={briefGenerating} generated={briefGenerated} onClick={() => handleGenerateField("brandBrief")} />
                   </div>
+                  <textarea
+                    id="bs-brief"
+                    className="bd-textarea"
+                    value={brandBrief}
+                    onChange={(e) => setBrandBrief(e.target.value.slice(0, 500))}
+                    rows={4}
+                    maxLength={500}
+                    placeholder="What does your brand do, sell, or stand for? e.g. We make sustainable activewear for women who want to look good and do good."
+                  />
+                  <div className="bd-count" style={{ textAlign: "right" }}>{brandBrief.length}/500</div>
+                </div>
 
-                  {apiError && (
-                    <p className="mt-5 text-sm text-red-500 bg-red-50 border border-red-100 rounded-xl px-4 py-3 text-center max-w-lg mx-auto">
-                      {apiError}
-                    </p>
-                  )}
+                <div className="bd-wiz-actions">
+                  <ContinueBtn disabled={targetAudience.trim().length < 10} onClick={goNext} />
+                </div>
+              </div>
+            )}
 
-                  <div className="flex justify-center mt-8">
-                    <button
-                      type="button"
-                      disabled={isSubmitting}
-                      onClick={() =>
-                        handleSubmit({
-                          instagramUrl: instagramUrl.trim() || undefined,
-                          websiteUrl: websiteUrl.trim() || undefined,
-                          googleBusinessUrl: googleBusinessUrl.trim() || undefined,
-                        })
-                      }
-                      className="w-full max-w-xs flex items-center justify-center gap-2 bg-[#1A7A4A] hover:bg-[#145C38] text-white font-semibold rounded-xl py-3.5 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      {isSubmitting && <Loader2 size={15} className="animate-spin" />}
-                      Analyse My Brand →
-                    </button>
-                  </div>
-                  <div className="flex justify-center mt-3">
-                    <button
-                      type="button"
-                      disabled={isSubmitting}
-                      onClick={() => handleSubmit()}
-                      className="text-sm text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-40"
-                    >
-                      Skip for now
-                    </button>
+            {/* ── STEP 7: URL Enrichment ───────────────────────────────── */}
+            {step === 7 && analysing && (
+              <AnalysisScreen
+                brandName={brandName.trim()}
+                industry={resolvedIndustry ?? ""}
+                instagramUrl={instagramUrl.trim()}
+                websiteUrl={websiteUrl.trim()}
+                googleBusinessUrl={googleBusinessUrl.trim()}
+                audience={targetAudience.trim()}
+                brief={brandBrief.trim()}
+                submitting={isSubmitting}
+                error={apiError}
+                onBack={() => setAnalysing(false)}
+                onContinue={() =>
+                  handleSubmit({
+                    instagramUrl: instagramUrl.trim() || undefined,
+                    websiteUrl: websiteUrl.trim() || undefined,
+                    googleBusinessUrl: googleBusinessUrl.trim() || undefined,
+                  })
+                }
+              />
+            )}
+
+            {step === 7 && !analysing && (
+              <div>
+                <BackBtn onClick={goBack} />
+                <h1>Let us find your brand online</h1>
+                <p className="lead">We&apos;ll analyse your pages to build a richer brand profile. Completely optional.</p>
+
+                <div className="bd-field">
+                  <label className="bd-label" htmlFor="bs-ig">Instagram profile</label>
+                  <div className="bd-iconfield">
+                    <input id="bs-ig" className="bd-input" type="url" value={instagramUrl} onChange={(e) => setInstagramUrl(e.target.value)} placeholder="https://instagram.com/yourbrand" />
                   </div>
                 </div>
-              )}
+                <div className="bd-field">
+                  <label className="bd-label" htmlFor="bs-web">Website</label>
+                  <div className="bd-iconfield">
+                    <input id="bs-web" className="bd-input" type="url" value={websiteUrl} onChange={(e) => setWebsiteUrl(e.target.value)} placeholder="https://yourbrand.com" />
+                  </div>
+                </div>
+                <div className="bd-field">
+                  <label className="bd-label" htmlFor="bs-gbp">Google Business Profile</label>
+                  <div className="bd-iconfield">
+                    <input id="bs-gbp" className="bd-input" type="url" value={googleBusinessUrl} onChange={(e) => setGoogleBusinessUrl(e.target.value)} placeholder="https://maps.google.com/maps?cid=..." />
+                  </div>
+                  <p className="bd-hint">We&apos;ll extract your address, phone number, opening hours and customer reviews to use in promotional posts and infographics.</p>
+                </div>
 
-            </motion.div>
-          </AnimatePresence>
+                {apiError && <p className="bd-error">{apiError}</p>}
+
+                <div className="bd-wiz-actions">
+                  <ContinueBtn label="Analyse my brand →" onClick={() => { setApiError(null); setAnalysing(true); }} />
+                  <SkipBtn label="Skip for now" onClick={() => !isSubmitting && handleSubmit()} />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

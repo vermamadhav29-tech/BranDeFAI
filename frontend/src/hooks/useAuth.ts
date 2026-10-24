@@ -13,6 +13,12 @@ export function useAuth() {
   const updateCredits = useAuthStore((s) => s.updateCredits);
 
   useEffect(() => {
+    // Local preview only: skip login with a demo user. Never active in production builds.
+    if (process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === "true") {
+      setUser({ id: "dev-user", email: "demo@brandefai.local", plan: "PRO", creditsBalance: 312 });
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setLoading(true);
     apiClient

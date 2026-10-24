@@ -2,15 +2,18 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import "@/styles/draftr-fonts.css";
+import "@/styles/app.css";
 import { useSidebarStore } from "@/stores/sidebarStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useBrandStore } from "@/stores/brandStore";
+import { loadOfflineBrand } from "@/lib/offlineBrand";
 import apiClient from "@/lib/apiClient";
 import type { Brand } from "@/types";
 
 export default function DashboardShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { isMobileOpen, closeMobile } = useSidebarStore();
+  const { isCollapsed, isMobileOpen, closeMobile } = useSidebarStore();
   const updateCredits = useAuthStore((s) => s.updateCredits);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isAuthLoading = useAuthStore((s) => s.isLoading);
@@ -23,7 +26,6 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   useEffect(() => {
     if (isAuthLoading) return;
     if (!isAuthenticated) {
-      console.log("[DashboardShell] auth settled — not authenticated → /login");
       router.replace("/login");
     }
   }, [isAuthLoading, isAuthenticated, router]);
@@ -46,20 +48,28 @@ export default function DashboardShell({ children }: { children: React.ReactNode
         .then((r) => {
           if (r.data.success && r.data.data) setBrand(r.data.data);
         })
-        .catch(() => {});
+        .catch(() => {
+          const local = loadOfflineBrand();
+          if (local) setBrand(local);
+        });
     }
   }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Hold the shell back until we know who the user is (avoids a flash of the app before a redirect).
+  if (isAuthLoading || !isAuthenticated) {
+    return (
+      <div className="bd-app">
+        <div className="bd-boot" role="status" aria-label="Loading">
+          <div className="bd-spinner" />
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <>
-      {isMobileOpen && (
-        <div
-          className="fixed inset-0 bg-black/30 z-40 lg:hidden"
-          onClick={closeMobile}
-          aria-hidden
-        />
-      )}
+    <div className="bd-app" data-collapsed={isCollapsed}>
+      {isMobileOpen && <div className="bd-overlay" onClick={closeMobile} aria-hidden />}
       {children}
-    </>
+    </div>
   );
 }

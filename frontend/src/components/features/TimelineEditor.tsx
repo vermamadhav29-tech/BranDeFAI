@@ -2,7 +2,7 @@
 
 export default function TimelineEditor() {
   return (
-    <div className="space-y-2">
+    <div>
       {/* TODO: drag-drop timeline using dnd-kit */}
     </div>
   );

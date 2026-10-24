@@ -1,9 +1,6 @@
-import PageTransition from "@/components/ui/PageTransition";
+import { redirect } from "next/navigation";
 
-export default function InstagramPage() {
-  return (
-    <PageTransition>
-      <h1 className="text-2xl font-bold text-[#1A2E44]">Instagram</h1>
-    </PageTransition>
-  );
+// Instagram now lives under Social accounts.
+export default function InstagramRedirect() {
+  redirect("/social-accounts");
 }

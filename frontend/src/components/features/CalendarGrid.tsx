@@ -2,7 +2,7 @@
 
 export default function CalendarGrid() {
   return (
-    <div className="grid grid-cols-7 gap-2">
+    <div>
       {/* TODO: render 30-day calendar cells */}
     </div>
   );

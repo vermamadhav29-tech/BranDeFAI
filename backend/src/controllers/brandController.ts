@@ -121,6 +121,21 @@ export async function getBrand(req: AuthRequest, res: Response, next: NextFuncti
   }
 }
 
+export async function deleteBrand(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const userId = req.user!.id;
+    const existing = await prisma.brand.findUnique({ where: { userId } });
+    if (!existing) {
+      return next(createError("Brand not found", 404));
+    }
+    // Content, images, posts, videos and calendar entries are removed with it (onDelete: Cascade).
+    await prisma.brand.delete({ where: { userId } });
+    sendSuccess(res, { deleted: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function updateBrand(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const userId = req.user!.id;
@@ -242,19 +257,26 @@ export async function extractBrandColor(req: AuthRequest, res: Response, next: N
 
 export async function generateBrandField(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { brandName, industry, tone, platforms, field } = req.body as GenerateFieldInput;
+    const { brandName, industry, tone, platforms, field, draft } = req.body as GenerateFieldInput;
     const platformsStr = platforms.length > 0 ? platforms.join(", ") : "various channels";
 
     const system =
       "You are a brand strategy expert. Return only the requested text — no labels, no bullet points, no preamble, no trailing explanation.";
 
-    const user =
-      field === "targetAudience"
+    const maxChars = field === "targetAudience" ? 380 : 480;
+    const draftText = draft?.trim() ?? "";
+
+    const user = draftText
+      ? `${brandName} is a ${industry} brand with a ${tone} tone that sells on ${platformsStr}. The owner wrote this ${
+          field === "targetAudience" ? "description of their target audience" : "brand brief"
+        }:\n\n"${draftText}"\n\nRefine it into a broader, clearer explanation that helps an AI marketing tool understand this brand's needs. Keep every fact the owner gave and do not contradict them. Add the useful context that is clearly implied (who it is for, what they care about, how they shop or what the brand offers, why it matters), but do not invent specific numbers, names or claims. Write one flowing paragraph in plain language and stay under ${maxChars} characters.`
+      : field === "targetAudience"
+
         ? `${brandName} is a ${industry} brand with a ${tone} tone that sells on ${platformsStr}. Write a detailed target audience profile in 3-4 sentences covering demographics, psychographics, shopping behaviour, and key pain points. Write it as a flowing paragraph.`
         : `Write a 5-sentence brand brief for ${brandName}, a ${industry} brand with a ${tone} tone that sells on ${platformsStr}. Cover: what the brand does, who it serves, its unique value proposition, its core values, and its market position. Write in third person as a professional brand description.`;
 
     const text = (await generateText(system, user)) as string;
-    sendSuccess(res, { text: text.trim() });
+    sendSuccess(res, { text: text.trim().slice(0, maxChars + 20) });
   } catch (err) {
     next(err);
   }

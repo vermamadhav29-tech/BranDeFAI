@@ -1,0 +1,21 @@
+/* Anchor targets sit below the sticky header */
+#pricing, #feature, #cta { scroll-margin-top: 80px; }
+
+/* Rupee prices (₹1,799) are wider than the template's $19: keep them inside the plan header */
+#pricing :is(p, h2, h3).framer-text:has(> span > span[style*="inline-block"]) {
+  --framer-font-size: 36px !important;
+}
+
+/* Article + legal reading column */
+.bd-prose { font-family: "Inter", "Inter Placeholder", sans-serif; color: #2b2b2c; font-size: 18px; line-height: 1.75; }
+.bd-prose h2 { font-family: "Inter Display", "Inter Display Placeholder", sans-serif; font-size: 28px; line-height: 1.2; font-weight: 600; letter-spacing: -0.03em; color: #101011; margin: 44px 0 12px; }
+.bd-prose p { margin: 0 0 18px; }
+.bd-prose ul { margin: 0 0 18px; padding-left: 22px; list-style: disc; }
+.bd-prose li { margin: 0 0 8px; }
+.bd-prose a { color: #5235ef; text-decoration: underline; text-underline-offset: 3px; }
+.bd-back { display: inline-flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 500; color: #606266; text-decoration: none !important; margin-bottom: 28px; }
+.bd-back:hover { color: #101011; }
+.bd-note { background: #f0f2f6; border-radius: 20px; padding: 16px 20px; font-size: 16px; color: #606266; margin-bottom: 32px; }
+.bd-cta { margin-top: 48px; background: #f0f2f6; border-radius: 30px; padding: 32px; }
+.bd-cta h2 { margin-top: 0; }
+.bd-btn { display: inline-flex; align-items: center; justify-content: center; padding: 14px 28px; border-radius: 30px; background: linear-gradient(180deg, #5235ef, #8771ff); color: #fff !important; font-weight: 600; font-size: 17px; text-decoration: none !important; box-shadow: 0 6px 20px rgba(82, 53, 239, 0.45); }

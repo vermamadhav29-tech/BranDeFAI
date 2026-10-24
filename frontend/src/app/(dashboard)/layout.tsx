@@ -6,12 +6,10 @@ import MobileNav from "@/components/layout/MobileNav";
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <DashboardShell>
-      <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg-base)" }}>
-        <Sidebar />
-        <div className="flex flex-col flex-1 overflow-hidden min-w-0">
-          <TopBar />
-          <main className="flex-1 overflow-y-auto p-6">{children}</main>
-        </div>
+      <Sidebar />
+      <div className="bd-main">
+        <TopBar />
+        <main className="bd-page">{children}</main>
       </div>
       <MobileNav />
     </DashboardShell>

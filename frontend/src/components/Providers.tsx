@@ -3,6 +3,7 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import queryClient from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
+import ButtonRoll from "@/components/ButtonRoll";
 
 function AuthInitializer() {
   useAuth();
@@ -13,6 +14,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthInitializer />
+      <ButtonRoll />
       {children}
     </QueryClientProvider>
   );

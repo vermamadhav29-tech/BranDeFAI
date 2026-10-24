@@ -60,10 +60,10 @@ function CallbackHandler() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-white">
-      <div className="flex flex-col items-center gap-3">
-        <Loader2 className="w-8 h-8 animate-spin text-[#1A7A4A]" />
-        <p className="text-sm text-gray-500 font-medium">Completing sign in…</p>
+    <div>
+      <div>
+        <Loader2 />
+        <p>Completing sign in…</p>
       </div>
     </div>
   );
@@ -73,8 +73,8 @@ export default function AuthCallbackPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-white">
-          <Loader2 className="w-8 h-8 animate-spin text-[#1A7A4A]" />
+        <div>
+          <Loader2 />
         </div>
       }
     >

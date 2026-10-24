@@ -1,30 +1,25 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import Link from "next/link";
 import {
   Sparkles,
   Loader2,
   Trash2,
   Image as ImageIcon,
-  X,
   UploadCloud,
   CalendarPlus,
   CheckCircle2,
   Clock,
-  ChevronDown,
-  ChevronUp,
   Pencil,
   Check,
-  AlertCircle,
   RefreshCw,
+  X,
 } from "lucide-react";
 import apiClient from "@/lib/apiClient";
 import { toast } from "@/lib/toast";
 import { useBrandStore } from "@/stores/brandStore";
 import { useAuthStore } from "@/stores/authStore";
-import { cn } from "@/lib/utils";
-import { ImageCardSkeleton } from "@/components/ui/Skeleton";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -56,33 +51,28 @@ interface OccasionInfo {
   hook: string;
 }
 
-const EASE_OUT: [number, number, number, number] = [0.22, 1, 0.36, 1];
-
 // ─── CalendarModal ────────────────────────────────────────────────────────────
-// Re-declared locally if the shared component doesn't exist
-function LocalCalendarModal({
-  imageId,
-  onClose,
-  onAdded,
-}: {
-  imageId: string;
-  onClose: () => void;
-  onAdded: () => void;
-}) {
+
+function LocalCalendarModal({ imageId, onClose, onAdded }: { imageId: string; onClose: () => void; onAdded: () => void }) {
   const now = new Date();
   const [day, setDay] = useState(now.getDate());
-  const [month] = useState(now.getMonth() + 1);
-  const [year] = useState(now.getFullYear());
+  const month = now.getMonth() + 1;
+  const year = now.getFullYear();
+  const daysInMonth = new Date(year, month, 0).getDate();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   async function handleSave() {
     setSaving(true);
     setError("");
     try {
-      await apiClient.post("/api/calendar/entry", {
-        calendarDay: day, month, year, contentType: "IMAGE", contentId: imageId,
-      });
+      await apiClient.post("/api/calendar/entry", { calendarDay: day, month, year, contentType: "IMAGE", contentId: imageId });
       onAdded();
       onClose();
     } catch (err: unknown) {
@@ -93,65 +83,46 @@ function LocalCalendarModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 8 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        transition={{ duration: 0.2, ease: EASE_OUT }}
-        className="rounded-2xl shadow-xl p-6 w-72 mx-4"
-        style={{ background: "var(--bg-card)" }}
-      >
-        <h3 className="text-sm font-bold mb-1" style={{ color: "var(--text-primary)" }}>Add to Calendar</h3>
-        <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
-          Schedule for {new Date(year, month - 1, 1).toLocaleString("en", { month: "long" })} {year}
+    <div className="bd-modal-bg" onClick={onClose} role="dialog" aria-modal="true" aria-label="Add to calendar">
+      <div className="bd-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>Add to calendar</h3>
+        <p className="bd-card-sub">
+          Pick a day in {new Date(year, month - 1, 1).toLocaleString("en", { month: "long" })} {year}
         </p>
-        <label className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Day (1–31)</label>
-        <input
-          type="number" min={1} max={31} value={day}
-          onChange={(e) => setDay(Math.min(31, Math.max(1, parseInt(e.target.value) || 1)))}
-          className="mt-1.5 w-full px-3 py-2 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-[#1A7A4A]/25 focus:border-[#1A7A4A]"
-          style={{ borderColor: "var(--border-color)", background: "var(--bg-input, white)", color: "var(--text-primary)" }}
-        />
-        {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
-        <div className="flex gap-2 mt-4">
-          <button type="button" onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl border text-xs font-semibold transition-colors"
-            style={{ borderColor: "var(--border-color)", color: "var(--text-muted)" }}>
-            Cancel
-          </button>
-          <button type="button" onClick={handleSave} disabled={saving}
-            className="flex-1 py-2.5 rounded-xl bg-[#1A7A4A] hover:bg-[#145C38] text-white text-xs font-semibold transition-colors flex items-center justify-center gap-1.5">
-            {saving ? <Loader2 size={12} className="animate-spin" /> : <CalendarPlus size={12} />}
-            {saving ? "Saving…" : "Schedule"}
+        <div className="bd-days">
+          {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((d) => (
+            <button key={d} type="button" className={(d === day ? "is-on " : "") + (d < now.getDate() ? "past" : "")} onClick={() => setDay(d)}>
+              {d}
+            </button>
+          ))}
+        </div>
+        {error && <p className="bd-error" style={{ marginTop: 0 }}>{error}</p>}
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+          <button type="button" className="bd-btn bd-btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="bd-btn bd-btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? <Loader2 size={16} className="bd-spin-icon" /> : <CalendarPlus size={16} />}
+            {saving ? "Saving…" : `Schedule for ${day}`}
           </button>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
-const STATUS_CONFIG: Record<PostStatus, { label: string; color: string; bg: string }> = {
-  PENDING_APPROVAL: { label: "Pending Approval", color: "#D97706", bg: "rgba(245,158,11,0.1)" },
-  APPROVED:         { label: "Approved",          color: "#059669", bg: "rgba(16,185,129,0.1)" },
-  SCHEDULED:        { label: "Scheduled",         color: "#2563EB", bg: "rgba(37,99,235,0.1)"  },
-  POSTED:           { label: "Posted",            color: "#6B7280", bg: "rgba(107,114,128,0.1)" },
+const STATUS_CONFIG: Record<PostStatus, { label: string; chip: string }> = {
+  PENDING_APPROVAL: { label: "Pending approval", chip: "a" },
+  APPROVED: { label: "Approved", chip: "g" },
+  SCHEDULED: { label: "Scheduled", chip: "b" },
+  POSTED: { label: "Posted", chip: "" },
 };
 
 // ─── Post card ────────────────────────────────────────────────────────────────
 
-function PostCard({
-  post,
-  onStatusChange,
-  onDelete,
-}: {
-  post: GeneratedPost;
-  onStatusChange: (id: string, status: PostStatus) => void;
-  onDelete: (id: string) => void;
-}) {
+function PostCard({ post, onStatusChange, onDelete }: { post: GeneratedPost; onStatusChange: (id: string, status: PostStatus) => void; onDelete: (id: string) => void }) {
   const [imgError, setImgError] = useState(false);
+  const [caption, setCaption] = useState(post.caption ?? "");
   const [editingCaption, setEditingCaption] = useState(false);
   const [captionDraft, setCaptionDraft] = useState(post.caption ?? "");
   const [savingCaption, setSavingCaption] = useState(false);
@@ -179,6 +150,7 @@ function PostCard({
     setSavingCaption(true);
     try {
       await apiClient.patch(`/api/creative/posts/${post.id}/caption`, { caption: captionDraft });
+      setCaption(captionDraft);
       setEditingCaption(false);
       toast.success("Caption updated.");
     } catch {
@@ -195,155 +167,100 @@ function PostCard({
       onDelete(post.id);
       toast.success("Post deleted.");
     } catch {
+      toast.error("Could not delete the post.");
       setDeleting(false);
       setConfirmDelete(false);
     }
   }
 
-  const captionPreview = (post.caption ?? "").slice(0, 80) + ((post.caption ?? "").length > 80 ? "…" : "");
+  const captionPreview = caption.length > 140 ? caption.slice(0, 140) + "…" : caption;
 
   return (
     <>
-      {calendarOpen && (
-        <LocalCalendarModal
-          imageId={post.id}
-          onClose={() => setCalendarOpen(false)}
-          onAdded={() => toast.success("Added to calendar!")}
-        />
-      )}
+      {calendarOpen && <LocalCalendarModal imageId={post.id} onClose={() => setCalendarOpen(false)} onAdded={() => toast.success("Added to calendar!")} />}
 
-      <motion.div
-        layout
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        transition={{ duration: 0.3, ease: EASE_OUT }}
-        className="rounded-2xl overflow-hidden"
-        style={{ background: "var(--bg-card)", border: "1px solid var(--border-color)", boxShadow: "var(--shadow-card)" }}
-      >
-        {/* Post image */}
-        <div className="relative overflow-hidden bg-gray-100" style={{ aspectRatio: "4 / 5" }}>
+      <div className="bd-pcard bd-reveal">
+        <div className="img">
           {imgError ? (
-            <div className="w-full h-full flex flex-col items-center justify-center gap-2">
-              <ImageIcon size={32} className="text-gray-300" />
-              <p className="text-xs text-gray-400">Image unavailable</p>
+            <div style={{ textAlign: "center", fontSize: 13 }}>
+              <ImageIcon size={30} style={{ marginBottom: 6 }} />
+              <div>Image unavailable</div>
             </div>
           ) : (
-            /* eslint-disable-next-line @next/next/no-img-element */
-            <img
-              src={post.imageUrl}
-              alt="AI generated post"
-              className="w-full h-full object-cover"
-              loading="lazy"
-              onError={() => setImgError(true)}
-            />
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={post.imageUrl} alt="AI generated post" loading="lazy" onError={() => setImgError(true)} />
           )}
-
-          {/* Occasion badge */}
-          {post.occasionName && (
-            <div className="absolute top-3 left-3">
-              <span className="text-[11px] font-bold text-white px-2.5 py-1 rounded-full shadow-md"
-                style={{ background: "rgba(0,0,0,0.6)" }}>
-                {post.occasionEmoji} {post.occasionName}
-              </span>
-            </div>
-          )}
-
-          {/* Status badge */}
-          <div className="absolute top-3 right-3">
-            <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full"
-              style={{ background: cfg.bg, color: cfg.color }}>
-              {cfg.label}
-            </span>
+          <div className="badges">
+            {post.occasionName ? <span className="bd-chip">{post.occasionName}</span> : <span />}
+            <span className={"bd-chip " + cfg.chip}>{cfg.label}</span>
           </div>
         </div>
 
-        {/* Caption */}
-        <div className="p-4 space-y-3">
+        <div className="body">
           {editingCaption ? (
-            <div className="space-y-2">
-              <textarea
-                value={captionDraft}
-                onChange={(e) => setCaptionDraft(e.target.value)}
-                rows={4}
-                className="w-full px-3 py-2 text-xs rounded-xl border resize-none focus:outline-none focus:ring-2 focus:ring-[#1A7A4A]/25 focus:border-[#1A7A4A]"
-                style={{ borderColor: "var(--border-color)", background: "var(--bg-input, white)", color: "var(--text-primary)" }}
-              />
-              <div className="flex gap-2">
-                <button type="button" onClick={handleSaveCaption} disabled={savingCaption}
-                  className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-[#1A7A4A] text-white text-xs font-semibold">
-                  {savingCaption ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-                  Save
+            <div style={{ display: "grid", gap: 8 }}>
+              <textarea className="bd-textarea" value={captionDraft} onChange={(e) => setCaptionDraft(e.target.value)} rows={5} style={{ minHeight: 110, fontSize: 14 }} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" className="bd-btn bd-btn-primary bd-btn-sm" onClick={handleSaveCaption} disabled={savingCaption}>
+                  {savingCaption ? <Loader2 size={13} className="bd-spin-icon" /> : <Check size={13} />} Save
                 </button>
-                <button type="button" onClick={() => { setEditingCaption(false); setCaptionDraft(post.caption ?? ""); }}
-                  className="flex-1 py-1.5 rounded-lg border text-xs font-semibold"
-                  style={{ borderColor: "var(--border-color)", color: "var(--text-muted)" }}>
-                  Cancel
-                </button>
+                <button type="button" className="bd-btn bd-btn-ghost bd-btn-sm" onClick={() => { setEditingCaption(false); setCaptionDraft(caption); }}>Cancel</button>
               </div>
             </div>
+          ) : captionPreview ? (
+            captionPreview
           ) : (
-            <p className="text-xs leading-relaxed line-clamp-2" style={{ color: "var(--text-secondary)" }}>
-              {captionPreview || <span style={{ color: "var(--text-muted)" }}>No caption</span>}
-            </p>
+            <span style={{ color: "var(--muted)" }}>No caption</span>
           )}
-
-          {/* Hashtags */}
           {post.hashtags.length > 0 && !editingCaption && (
-            <p className="text-[11px] truncate" style={{ color: "#1A7A4A" }}>
-              {post.hashtags.slice(0, 5).map(h => `#${h}`).join(" ")}
+            <div className="tags">
+              {post.hashtags.slice(0, 5).map((h) => `#${h}`).join(" ")}
               {post.hashtags.length > 5 && ` +${post.hashtags.length - 5}`}
-            </p>
+            </div>
           )}
-
-          {/* Action buttons */}
-          <div className="flex gap-1.5 pt-1">
-            {post.status === "PENDING_APPROVAL" && (
-              <button type="button" onClick={handleApprove} disabled={approving}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#1A7A4A] text-white text-xs font-semibold transition-all flex-1 justify-center">
-                {approving ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
-                Approve
-              </button>
-            )}
-
-            {!editingCaption && (
-              <button type="button" onClick={() => setEditingCaption(true)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors"
-                style={{ borderColor: "var(--border-color)", color: "var(--text-muted)" }}
-                title="Edit Caption">
-                <Pencil size={11} />
-              </button>
-            )}
-
-            <button type="button" onClick={() => setCalendarOpen(true)}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors"
-              style={{ borderColor: "var(--border-color)", color: "var(--text-muted)" }}
-              title="Add to Calendar">
-              <CalendarPlus size={11} />
-            </button>
-
-            {confirmDelete ? (
-              <button type="button" onClick={handleDelete} disabled={deleting}
-                className="px-2.5 py-1.5 rounded-lg bg-red-500 text-white text-xs font-semibold flex items-center gap-1 ml-auto">
-                {deleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
-                Confirm
-              </button>
-            ) : (
-              <button type="button" onClick={() => setConfirmDelete(true)}
-                className="ml-auto px-2.5 py-1.5 rounded-lg border text-xs transition-colors"
-                style={{ borderColor: "var(--border-color)", color: "var(--text-muted)" }}
-                title="Delete">
-                <Trash2 size={11} />
-              </button>
-            )}
-          </div>
         </div>
-      </motion.div>
+
+        <div className="acts">
+          {post.status === "PENDING_APPROVAL" && (
+            <button type="button" className="bd-btn bd-btn-green bd-btn-sm" style={{ flex: 1 }} onClick={handleApprove} disabled={approving}>
+              {approving ? <Loader2 size={14} className="bd-spin-icon" /> : <CheckCircle2 size={14} />} Approve
+            </button>
+          )}
+          {!editingCaption && (
+            <button type="button" className="bd-iconbtn" onClick={() => setEditingCaption(true)} title="Edit caption" aria-label="Edit caption">
+              <Pencil size={15} />
+            </button>
+          )}
+          <button type="button" className="bd-iconbtn" onClick={() => setCalendarOpen(true)} title="Add to calendar" aria-label="Add to calendar">
+            <CalendarPlus size={15} />
+          </button>
+          {confirmDelete ? (
+            <>
+              <button type="button" className="bd-btn bd-btn-sm" style={{ background: "var(--red-bg)", color: "var(--red)" }} onClick={handleDelete} disabled={deleting}>
+                {deleting ? <Loader2 size={13} className="bd-spin-icon" /> : <Trash2 size={13} />} Delete
+              </button>
+              <button type="button" className="bd-iconbtn" onClick={() => setConfirmDelete(false)} aria-label="Cancel delete"><X size={15} /></button>
+            </>
+          ) : (
+            <button type="button" className="bd-iconbtn danger" onClick={() => setConfirmDelete(true)} title="Delete" aria-label="Delete post">
+              <Trash2 size={15} />
+            </button>
+          )}
+        </div>
+      </div>
     </>
   );
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
+
+const TABS: { key: "ALL" | PostStatus; label: string }[] = [
+  { key: "ALL", label: "All" },
+  { key: "PENDING_APPROVAL", label: "Pending" },
+  { key: "APPROVED", label: "Approved" },
+  { key: "SCHEDULED", label: "Scheduled" },
+  { key: "POSTED", label: "Posted" },
+];
 
 export default function ImagesPage() {
   const brand = useBrandStore((s) => s.brand);
@@ -367,10 +284,6 @@ export default function ImagesPage() {
   // Clean up scheduled refreshes on unmount
   useEffect(() => () => refreshTimersRef.current.forEach(clearTimeout), []);
 
-  // AI override (collapsed by default)
-  const [overrideOpen, setOverrideOpen] = useState(false);
-  const [overrideText, setOverrideText] = useState("");
-
   // Occasion
   const [occasion, setOccasion] = useState<OccasionInfo | null>(null);
 
@@ -380,6 +293,7 @@ export default function ImagesPage() {
   // Generated posts
   const [posts, setPosts] = useState<GeneratedPost[]>([]);
   const [postsLoaded, setPostsLoaded] = useState(false);
+  const [tab, setTab] = useState<"ALL" | PostStatus>("ALL");
 
   // ── Load products ──
   useEffect(() => {
@@ -389,9 +303,7 @@ export default function ImagesPage() {
       .then((res) => {
         if (res.data.success && res.data.data?.images) {
           setProducts(res.data.data.images);
-          if (res.data.data.images.length > 0) {
-            setSelectedProductId(res.data.data.images[0].id);
-          }
+          if (res.data.data.images.length > 0) setSelectedProductId(res.data.data.images[0].id);
         }
       })
       .catch(() => {})
@@ -405,9 +317,7 @@ export default function ImagesPage() {
     apiClient
       .get<{ success: boolean; data: { posts: GeneratedPost[] } }>("/api/creative/posts")
       .then((res) => {
-        if (res.data.success && res.data.data?.posts) {
-          setPosts(res.data.data.posts);
-        }
+        if (res.data.success && res.data.data?.posts) setPosts(res.data.data.posts);
       })
       .catch(() => {})
       .finally(() => setPostsLoaded(true));
@@ -417,10 +327,7 @@ export default function ImagesPage() {
   useEffect(() => {
     apiClient
       .get<{ success: boolean; data: { occasions: OccasionInfo[] } }>("/api/creative/occasions")
-      .then((res) => {
-        const occ = res.data.data?.occasions?.[0] ?? null;
-        setOccasion(occ);
-      })
+      .then((res) => setOccasion(res.data.data?.occasions?.[0] ?? null))
       .catch(() => {});
   }, []);
 
@@ -435,18 +342,12 @@ export default function ImagesPage() {
     try {
       const form = new FormData();
       form.append("image", file);
-      const res = await apiClient.post<{
-        success: boolean;
-        data: { productImageId: string; imageUrl: string };
-        error: string | null;
-      }>("/api/uploads/product-image", form, { headers: { "Content-Type": "multipart/form-data" } });
+      const res = await apiClient.post<{ success: boolean; data: { productImageId: string; imageUrl: string }; error: string | null }>("/api/uploads/product-image", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
 
       if (res.data.success && res.data.data) {
-        const newImg: ProductImage = {
-          id: res.data.data.productImageId,
-          imageUrl: res.data.data.imageUrl,
-          uploadedAt: new Date().toISOString(),
-        };
+        const newImg: ProductImage = { id: res.data.data.productImageId, imageUrl: res.data.data.imageUrl, uploadedAt: new Date().toISOString() };
         setProducts((prev) => [newImg, ...prev]);
         setSelectedProductId(newImg.id);
         toast.success("Photo uploaded! Generating your post in the background…");
@@ -474,11 +375,7 @@ export default function ImagesPage() {
     }
     setGenerating(true);
     try {
-      const res = await apiClient.post<{
-        success: boolean;
-        data: { post: GeneratedPost };
-        error: string | null;
-      }>("/api/creative/generate", { productImageId: selectedProductId });
+      const res = await apiClient.post<{ success: boolean; data: { post: GeneratedPost }; error: string | null }>("/api/creative/generate", { productImageId: selectedProductId });
 
       if (res.data.success && res.data.data?.post) {
         setPosts((prev) => [res.data.data.post, ...prev]);
@@ -504,282 +401,162 @@ export default function ImagesPage() {
   }, []);
 
   const hasProducts = products.length > 0;
-  const pendingCount = posts.filter((p) => p.status === "PENDING_APPROVAL").length;
+  const counts = useMemo(() => {
+    const c: Record<string, number> = { ALL: posts.length };
+    for (const p of posts) c[p.status] = (c[p.status] ?? 0) + 1;
+    return c;
+  }, [posts]);
+  const pendingCount = counts.PENDING_APPROVAL ?? 0;
+  const visible = tab === "ALL" ? posts : posts.filter((p) => p.status === tab);
+  const lowCredits = (user?.creditsBalance ?? 0) < 2;
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 items-start">
-
-      {/* ════════════════════════ LEFT PANEL ══════════════════════════════ */}
-      <div className="w-full lg:w-[320px] shrink-0 space-y-4 lg:sticky lg:top-0">
-
-        {/* ── Product Photos ───────────────────────────────────────────── */}
-        <div className="rounded-2xl p-5 space-y-4"
-          style={{ background: "var(--bg-card)", border: "1px solid var(--border-color)", boxShadow: "var(--shadow-card)" }}>
-
-          <div>
-            <h2 className="text-[15px] font-bold" style={{ color: "var(--text-primary)" }}>Image Studio</h2>
-            <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>AI-powered promotional posts</p>
-          </div>
-
-          {/* Product grid */}
-          {productsLoaded && hasProducts && (
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--text-muted)" }}>
-                Your Product Photos
-              </p>
-              <div className="grid grid-cols-4 gap-2">
-                {products.slice(0, 11).map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setSelectedProductId(p.id)}
-                    className={cn(
-                      "relative aspect-square rounded-lg overflow-hidden border-2 transition-all",
-                      selectedProductId === p.id
-                        ? "border-[#1A7A4A] ring-1 ring-[#1A7A4A]/40"
-                        : "border-transparent hover:border-gray-300"
-                    )}
-                    style={{ background: "var(--border-color)" }}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={p.imageUrl} alt="Product" className="w-full h-full object-cover" />
-                    {selectedProductId === p.id && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-[#1A7A4A]/20">
-                        <Check size={14} className="text-white drop-shadow" />
-                      </div>
-                    )}
-                  </button>
-                ))}
-
-                {/* Add more button */}
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="aspect-square rounded-lg border-2 border-dashed flex items-center justify-center text-lg font-light transition-all hover:opacity-70"
-                  style={{ borderColor: "var(--border-hover, #d1d5db)", color: "var(--text-muted)" }}
-                  title="Add photo"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Upload zone — shown when no products yet or as primary CTA */}
-          {productsLoaded && !hasProducts && (
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => !uploading && fileInputRef.current?.click()}
-              onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && !uploading && fileInputRef.current?.click()}
-              onDragOver={(e) => { e.preventDefault(); setUploadDrag(true); }}
-              onDragLeave={() => setUploadDrag(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setUploadDrag(false);
-                const f = e.dataTransfer.files?.[0];
-                if (f) handleUpload(f);
-              }}
-              className={cn(
-                "flex flex-col items-center justify-center gap-3 px-6 py-10 rounded-xl border-2 border-dashed cursor-pointer select-none transition-all",
-                uploadDrag ? "border-[#1A7A4A] bg-[#E8F5EE]/40" : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-              )}
-            >
-              {uploading ? (
-                <>
-                  <Loader2 size={26} className="text-[#1A7A4A] animate-spin" />
-                  <p className="text-xs text-[#1A7A4A] font-medium">Uploading…</p>
-                </>
-              ) : (
-                <>
-                  <UploadCloud size={26} className={uploadDrag ? "text-[#1A7A4A]" : "text-gray-300"} />
-                  <div className="text-center">
-                    <p className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
-                      Upload your first product photo
-                    </p>
-                    <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
-                      JPEG · PNG · WebP · Max 10 MB
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Upload progress indicator when products exist */}
-          {uploading && hasProducts && (
-            <div className="flex items-center gap-2 py-1">
-              <Loader2 size={13} className="animate-spin text-[#1A7A4A] shrink-0" />
-              <p className="text-xs text-[#1A7A4A]">Uploading & analyzing photo…</p>
-            </div>
-          )}
-
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); }}
-          />
-
-          {/* ── Optional override ─────────────────────────────────────── */}
-          <div className="border-t pt-3" style={{ borderColor: "var(--border-color)" }}>
-            <button
-              type="button"
-              onClick={() => setOverrideOpen((v) => !v)}
-              className="w-full flex items-center justify-between text-xs font-semibold uppercase tracking-wide"
-              style={{ color: "var(--text-muted)" }}
-            >
-              Optional — Override AI
-              {overrideOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            </button>
-            <AnimatePresence initial={false}>
-              {overrideOpen && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.2, ease: EASE_OUT }}
-                  className="overflow-hidden mt-2"
-                >
-                  <textarea
-                    value={overrideText}
-                    onChange={(e) => setOverrideText(e.target.value)}
-                    rows={3}
-                    placeholder="Leave empty to let AI decide automatically…"
-                    className="w-full px-3 py-2 text-xs rounded-xl border resize-none focus:outline-none focus:ring-2 focus:ring-[#1A7A4A]/25 focus:border-[#1A7A4A]"
-                    style={{ borderColor: "var(--border-color)", background: "var(--bg-input, white)", color: "var(--text-primary)" }}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          {/* ── Occasion info ─────────────────────────────────────────── */}
-          <div className="rounded-xl px-3 py-2.5" style={{ background: "var(--bg-subtle, #f9fafb)", border: "1px solid var(--border-color)" }}>
-            {occasion ? (
-              <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-                <span className="font-semibold">{occasion.emoji} {occasion.name}</span> in {occasion.days_away} day{occasion.days_away !== 1 ? "s" : ""} — AI will create a {occasion.name} post
-              </p>
-            ) : (
-              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                No upcoming occasion — AI will create a brand awareness post
-              </p>
-            )}
-          </div>
-
-          {/* ── Generate button ───────────────────────────────────────── */}
-          <div className="space-y-1.5">
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={generating || !hasProducts || !selectedProductId}
-              className={cn(
-                "w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold transition-all",
-                generating || !hasProducts || !selectedProductId
-                  ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                  : "bg-[#1A7A4A] hover:bg-[#145C38] text-white shadow-sm"
-              )}
-            >
-              {generating ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" />
-                  Creating Post…
-                </>
-              ) : (
-                <>
-                  <Sparkles size={16} />
-                  Create Post
-                </>
-              )}
-            </button>
-            <p className="text-center text-[11px]" style={{ color: "var(--text-muted)" }}>
-              AI uses your brand style automatically · 2 credits
-            </p>
-          </div>
+    <div className="bd-flow">
+      <div className="bd-pagehead">
+        <div>
+          <h1>Image studio</h1>
+          <p>Turn product photos into on-brand Instagram posts. Review, edit and approve each one.</p>
         </div>
-
-        {/* Pending count indicator */}
-        {pendingCount > 0 && (
-          <div className="flex items-center gap-2 px-4 py-3 rounded-xl"
-            style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)" }}>
-            <Clock size={14} style={{ color: "#D97706" }} />
-            <p className="text-xs font-medium" style={{ color: "#D97706" }}>
-              {pendingCount} post{pendingCount !== 1 ? "s" : ""} waiting for approval →
-            </p>
-          </div>
-        )}
-
+        <Link href="/dashboard" className="bd-btn bd-btn-ghost bd-btn-sm">Bulk product posts</Link>
       </div>
 
-      {/* ════════════════════════ RIGHT PANEL ═════════════════════════════ */}
-      <div className="flex-1 min-w-0">
+      <div className="bd-studio">
+        {/* ═════ LEFT: create ═════ */}
+        <div className="bd-flow bd-sticky">
+          <div className="bd-card bd-reveal">
+            <div className="bd-card-head">
+              <div>
+                <h2 className="bd-card-title">Create a post</h2>
+                <p className="bd-card-sub">Pick a product photo and let AI do the rest.</p>
+              </div>
+            </div>
 
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-[15px] font-bold" style={{ color: "var(--text-primary)" }}>
-            Generated Posts
-            {posts.length > 0 && (
-              <span className="ml-2 text-xs font-medium px-2 py-0.5 rounded-full"
-                style={{ background: "var(--bg-subtle, #f3f4f6)", color: "var(--text-muted)" }}>
-                {posts.length}
-              </span>
+            {productsLoaded && hasProducts && (
+              <div>
+                <p className="bd-label" style={{ marginBottom: 10 }}>Your product photos</p>
+                <div className="bd-products">
+                  {products.slice(0, 11).map((p) => (
+                    <button key={p.id} type="button" className={"bd-product" + (selectedProductId === p.id ? " is-on" : "")} onClick={() => setSelectedProductId(p.id)} aria-label="Select product photo" aria-pressed={selectedProductId === p.id}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={p.imageUrl} alt="Product" />
+                      {selectedProductId === p.id && <span className="tick"><Check size={13} /></span>}
+                    </button>
+                  ))}
+                  <button type="button" className="bd-product add" onClick={() => fileInputRef.current?.click()} title="Add photo" aria-label="Add a product photo" disabled={uploading}>
+                    {uploading ? <Loader2 size={18} className="bd-spin-icon" /> : "+"}
+                  </button>
+                </div>
+              </div>
             )}
-          </h2>
-          <button
-            type="button"
-            onClick={() => setPostsRefreshTick((n) => n + 1)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors hover:opacity-70"
-            style={{ borderColor: "var(--border-color)", color: "var(--text-muted)" }}
-            title="Refresh posts"
-          >
-            <RefreshCw size={12} />
-            Refresh
-          </button>
+
+            {!productsLoaded && <div className="bd-skel" style={{ height: 160, borderRadius: 22 }} />}
+
+            {productsLoaded && !hasProducts && (
+              <div
+                className={"bd-drop" + (uploadDrag ? " is-over" : "")}
+                role="button"
+                tabIndex={0}
+                onClick={() => !uploading && fileInputRef.current?.click()}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && !uploading && fileInputRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); setUploadDrag(true); }}
+                onDragLeave={() => setUploadDrag(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setUploadDrag(false);
+                  const f = e.dataTransfer.files?.[0];
+                  if (f) handleUpload(f);
+                }}
+              >
+                {uploading ? (
+                  <>
+                    <Loader2 size={26} className="bd-spin-icon" style={{ color: "var(--p)" }} />
+                    <b>Uploading…</b>
+                  </>
+                ) : (
+                  <>
+                    <span className="ico"><UploadCloud size={26} /></span>
+                    <b>Upload your first product photo</b>
+                    <span>JPEG · PNG · WebP · max 10 MB</span>
+                  </>
+                )}
+              </div>
+            )}
+
+            {uploading && hasProducts && (
+              <div className="bd-busy" style={{ marginBottom: 0 }}>
+                <Loader2 size={15} className="bd-spin-icon" /> Uploading &amp; analyzing photo…
+              </div>
+            )}
+
+            <input ref={fileInputRef} type="file" hidden accept="image/jpeg,image/png,image/webp" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); e.target.value = ""; }} />
+
+            <div style={{ marginTop: 18 }}>
+              {occasion ? (
+                <div className="bd-occ-banner">
+                  <span>
+                    <b>{occasion.name}</b> is in {occasion.days_away} day{occasion.days_away !== 1 ? "s" : ""}. AI will create a {occasion.name} post.
+                  </span>
+                </div>
+              ) : (
+                <div className="bd-occ-banner" style={{ background: "var(--bg)", color: "var(--gray)" }}>
+                  <span>No upcoming occasion. AI will create a brand awareness post.</span>
+                </div>
+              )}
+            </div>
+
+            <button type="button" className="bd-btn bd-btn-primary" style={{ width: "100%", height: 50, marginTop: 18 }} onClick={handleGenerate} disabled={generating || !hasProducts || !selectedProductId || lowCredits}>
+              {generating ? (<><Loader2 size={17} className="bd-spin-icon" /> Creating post…</>) : (<><Sparkles size={17} /> Create post</>)}
+            </button>
+            <p className="bd-hint" style={{ textAlign: "center", marginTop: 10 }}>
+              {lowCredits ? <>You need at least 2 credits. <Link href="/credits" className="bd-link" style={{ display: "inline" }}>Get credits</Link></> : "Uses your brand style automatically · 2 credits"}
+            </p>
+          </div>
+
+          {pendingCount > 0 && (
+            <button type="button" className="bd-occ-banner" style={{ border: 0, textAlign: "left", cursor: "pointer", font: "inherit", width: "100%", background: "var(--tint)", color: "var(--p)" }} onClick={() => setTab("PENDING_APPROVAL")}>
+              <Clock size={20} />
+              <span><b>{pendingCount} post{pendingCount !== 1 ? "s" : ""}</b> waiting for your approval →</span>
+            </button>
+          )}
         </div>
 
-        {!postsLoaded ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <ImageCardSkeleton key={i} aspect="portrait" />
-            ))}
+        {/* ═════ RIGHT: posts ═════ */}
+        <div className="bd-flow">
+          <div className="bd-card bd-reveal" style={{ padding: "18px 20px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div className="bd-filters" role="tablist">
+                {TABS.map((t) => (
+                  <button key={t.key} type="button" role="tab" aria-selected={tab === t.key} className={"bd-tab-btn" + (tab === t.key ? " is-on" : "")} onClick={() => setTab(t.key)}>
+                    {t.label} <small>{counts[t.key] ?? 0}</small>
+                  </button>
+                ))}
+              </div>
+              <button type="button" className="bd-iconbtn" onClick={() => setPostsRefreshTick((n) => n + 1)} title="Refresh posts" aria-label="Refresh posts">
+                <RefreshCw size={15} />
+              </button>
+            </div>
           </div>
-        ) : posts.length === 0 ? (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.35, ease: EASE_OUT }}
-            className="flex flex-col items-center justify-center py-24 gap-4 text-center rounded-2xl border-2 border-dashed"
-            style={{ borderColor: "var(--border-color)" }}
-          >
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
-              style={{ background: "rgba(26,122,74,0.08)" }}>
-              <ImageIcon size={28} style={{ color: "#1A7A4A" }} />
-            </div>
-            <div>
-              <p className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
-                Your AI-generated posts will appear here
-              </p>
-              <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-                Upload a product photo and click Create Post
-              </p>
-            </div>
-          </motion.div>
-        ) : (
-          <motion.div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4" layout>
-            <AnimatePresence mode="popLayout">
-              {posts.map((post) => (
-                <PostCard
-                  key={post.id}
-                  post={post}
-                  onStatusChange={handleStatusChange}
-                  onDelete={handleDeletePost}
-                />
-              ))}
-            </AnimatePresence>
-          </motion.div>
-        )}
 
+          {!postsLoaded ? (
+            <div className="bd-postgrid">
+              {[0, 1, 2].map((i) => <div key={i} className="bd-skel" style={{ aspectRatio: "4 / 6", borderRadius: 24 }} />)}
+            </div>
+          ) : visible.length === 0 ? (
+            <div className="bd-card" style={{ textAlign: "center", padding: "56px 24px" }}>
+              <span className="bd-stat-ico" style={{ width: 64, height: 64, borderRadius: 22, margin: "0 auto 18px", background: "var(--tint)", color: "var(--p)" }}>
+                <ImageIcon size={28} />
+              </span>
+              <h2 className="bd-card-title" style={{ fontSize: 22 }}>{posts.length === 0 ? "Your AI-generated posts will appear here" : "No posts in this view"}</h2>
+              <p className="bd-card-sub" style={{ marginTop: 8 }}>{posts.length === 0 ? "Upload a product photo and click Create post." : "Try another filter above."}</p>
+            </div>
+          ) : (
+            <div className="bd-postgrid">
+              {visible.map((post) => (
+                <PostCard key={post.id} post={post} onStatusChange={handleStatusChange} onDelete={handleDeletePost} />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
